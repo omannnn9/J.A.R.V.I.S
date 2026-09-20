@@ -4,7 +4,6 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { getSupabaseBrowserClient } from "@/lib/supabase/client";
-import { setRememberMe } from "@/lib/supabase/storage";
 import { useAuth } from "@/lib/auth/AuthProvider";
 import { AuthShell, FieldInput, SubmitButton, useShake } from "@/components/auth/AuthShell";
 
@@ -13,7 +12,6 @@ export default function LoginPage() {
   const { session, loading: authLoading } = useAuth();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-  const [remember, setRemember] = useState(true);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [resetSent, setResetSent] = useState(false);
@@ -32,7 +30,6 @@ export default function LoginPage() {
       return;
     }
     setLoading(true);
-    setRememberMe(remember);
     const supabase = getSupabaseBrowserClient();
     const { error: signInError } = await supabase.auth.signInWithPassword({
       email,
@@ -87,16 +84,7 @@ export default function LoginPage() {
           placeholder="••••••••"
         />
 
-        <div className="mb-4 flex items-center justify-between text-[12px]">
-          <label className="flex cursor-pointer items-center gap-2 text-[var(--muted)]">
-            <input
-              type="checkbox"
-              checked={remember}
-              onChange={(e) => setRemember(e.target.checked)}
-              className="h-3.5 w-3.5 accent-[var(--accent)]"
-            />
-            Remember me
-          </label>
+        <div className="mb-4 flex items-center justify-end text-[12px]">
           <button
             type="button"
             onClick={handleForgotPassword}

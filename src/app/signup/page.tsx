@@ -4,7 +4,6 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { getSupabaseBrowserClient } from "@/lib/supabase/client";
-import { setRememberMe } from "@/lib/supabase/storage";
 import { useAuth } from "@/lib/auth/AuthProvider";
 import { AuthShell, FieldInput, SubmitButton, useShake } from "@/components/auth/AuthShell";
 
@@ -43,7 +42,6 @@ export default function SignupPage() {
       return;
     }
     setLoading(true);
-    setRememberMe(true);
     const supabase = getSupabaseBrowserClient();
     const { data, error: signUpError } = await supabase.auth.signUp({
       email,

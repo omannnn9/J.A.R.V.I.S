@@ -1,5 +1,4 @@
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
-import { authStorage } from "./storage";
 
 const url = process.env.NEXT_PUBLIC_SUPABASE_URL!;
 const anonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
@@ -11,9 +10,10 @@ export function getSupabaseBrowserClient() {
   if (browserClient) return browserClient;
   browserClient = createClient(url, anonKey, {
     auth: {
+      // localStorage (the default) survives browser restarts, so once signed
+      // in, JARVIS stays signed in until the user explicitly signs out.
       persistSession: true,
       autoRefreshToken: true,
-      storage: typeof window === "undefined" ? undefined : authStorage,
       storageKey: "jarvis-auth",
     },
   });
