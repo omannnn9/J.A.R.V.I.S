@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@/lib/auth/AuthProvider";
 import { useChat } from "@/hooks/useChat";
+import { useProactive } from "@/hooks/useProactive";
 import { useReminderWatcher } from "@/hooks/useReminderWatcher";
 import { useToast } from "@/hooks/useToast";
 import type { AvatarState } from "@/lib/avatarState";
@@ -27,6 +28,7 @@ export default function Home() {
   const {
     messages,
     sendText,
+    triggerProactive,
     loading: chatLoading,
     speaking,
     muted,
@@ -64,6 +66,13 @@ export default function Home() {
 
   useReminderWatcher(user?.id ?? null, (text) => {
     toast(`Reminder: ${text}`);
+  });
+
+  useProactive({
+    enabled: historyLoaded && !!profile?.gemini_api_key && !asleep,
+    messages,
+    busy: chatLoading || speaking || micOn,
+    trigger: triggerProactive,
   });
 
   useEffect(() => {

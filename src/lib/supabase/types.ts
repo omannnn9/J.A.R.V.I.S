@@ -6,6 +6,12 @@ export interface Profile {
   theme_hue: number;
   voice_name: string;
   gemini_api_key: string | null;
+  // Stored by device *label*, not id — device ids are unstable across
+  // browser restarts and hot-plugs, labels survive them. Resolved back to
+  // a live deviceId at connect time, falling back to the system default
+  // when the saved device is no longer present.
+  mic_device_label: string | null;
+  speaker_device_label: string | null;
   onboarded: boolean;
   created_at: string;
   updated_at: string;

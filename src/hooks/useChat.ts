@@ -14,6 +14,7 @@ import { executeTool, toolDeclarations } from "@/lib/actions/tools";
 import { getSupabaseBrowserClient } from "@/lib/supabase/client";
 import { floatTo16BitPCM, int16ToBase64, base64ToInt16, int16ToFloat32, resampleTo16k } from "@/lib/gemini/pcm";
 import { resetLipSync, scheduleTextSpan, stopLipSync } from "@/lib/head/lipSyncBus";
+import { resolveDeviceIdByLabel } from "@/lib/audio/devices";
 import type { Profile } from "@/lib/supabase/types";
 
 export interface ChatMessage {
@@ -169,8 +170,19 @@ export function useChat(profile: Profile | null, userId: string | null) {
   const playChunk = useCallback((base64Pcm: string) => {
     if (ignoreAudioRef.current || mutedRef.current) return;
     if (!playbackCtxRef.current) {
-      playbackCtxRef.current = new AudioContext({ sampleRate: OUTPUT_SAMPLE_RATE });
-      nextStartTimeRef.current = playbackCtxRef.current.currentTime;
+      const ctx = new AudioContext({ sampleRate: OUTPUT_SAMPLE_RATE });
+      playbackCtxRef.current = ctx;
+      nextStartTimeRef.current = ctx.currentTime;
+
+      const speakerLabel = profileRef.current?.speaker_device_label;
+      if (speakerLabel && "setSinkId" in ctx) {
+        void resolveDeviceIdByLabel("audiooutput", speakerLabel).then((deviceId) => {
+          if (!deviceId || playbackCtxRef.current !== ctx) return;
+          (ctx as AudioContext & { setSinkId(id: string): Promise<void> }).setSinkId(deviceId).catch(() => {
+            // Saved output device no longer exists — stay on the default.
+          });
+        });
+      }
     }
     const ctx = playbackCtxRef.current;
     if (ctx.state === "suspended") void ctx.resume();
@@ -444,6 +456,25 @@ export function useChat(profile: Profile | null, userId: string | null) {
     [connect, appendMessage]
   );
 
+  // An internal nudge, not something the user said — used by the proactive
+  // idle check-in. Never logged as a user message (nothing to show), never
+  // persisted; only the model's resulting reply (if any) becomes a real
+  // message, through the normal handleServerMessage/finalizeTurn path.
+  const triggerProactive = useCallback(
+    async (promptText: string) => {
+      if (!userIdRef.current) return;
+      try {
+        const session = await connect();
+        const turn: Content = { role: "user", parts: [{ text: promptText }] };
+        session.sendClientContent({ turns: [turn], turnComplete: true });
+      } catch {
+        // A background nudge failing silently is correct — this was never
+        // something the user asked for, so it shouldn't surface an error.
+      }
+    },
+    [connect]
+  );
+
   const toggleMic = useCallback(async () => {
     if (micOn) {
       micNodeRef.current?.disconnect();
@@ -460,8 +491,14 @@ export function useChat(profile: Profile | null, userId: string | null) {
     try {
       setError(null);
       const session = await connect();
+      const micDeviceId = await resolveDeviceIdByLabel("audioinput", profileRef.current?.mic_device_label);
       const stream = await navigator.mediaDevices.getUserMedia({
-        audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true },
+        audio: {
+          channelCount: 1,
+          echoCancellation: true,
+          noiseSuppression: true,
+          ...(micDeviceId ? { deviceId: { exact: micDeviceId } } : {}),
+        },
       });
       const ctx = new AudioContext();
       if (ctx.state === "suspended") await ctx.resume();
@@ -518,6 +555,7 @@ export function useChat(profile: Profile | null, userId: string | null) {
   return {
     messages,
     sendText,
+    triggerProactive,
     loading,
     speaking,
     muted,

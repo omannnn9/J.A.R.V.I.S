@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import type { Profile } from "@/lib/supabase/types";
+import { useAudioDevices } from "@/hooks/useAudioDevices";
 
 export function SettingsPanel({
   profile,
@@ -16,8 +17,11 @@ export function SettingsPanel({
   const [hue, setHue] = useState(profile.theme_hue);
   const [apiKey, setApiKey] = useState(profile.gemini_api_key ?? "");
   const [showKey, setShowKey] = useState(false);
+  const [micLabel, setMicLabel] = useState(profile.mic_device_label ?? "");
+  const [speakerLabel, setSpeakerLabel] = useState(profile.speaker_device_label ?? "");
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
+  const { inputs, outputs, supportsOutputSelection } = useAudioDevices();
 
   async function handleSave() {
     setSaving(true);
@@ -28,6 +32,8 @@ export function SettingsPanel({
       voice_name: voiceName.trim(),
       theme_hue: hue,
       gemini_api_key: apiKey.trim() || null,
+      mic_device_label: micLabel || null,
+      speaker_device_label: speakerLabel || null,
     });
     setSaving(false);
     setSaved(true);
@@ -105,6 +111,26 @@ export function SettingsPanel({
         </div>
       </Field>
 
+      <Field label="Microphone" hint="Which input device JARVIS listens through. Falls back to your system default if this one disappears.">
+        <SelectInput
+          value={micLabel}
+          onChange={setMicLabel}
+          options={inputs.map((d) => d.label)}
+          defaultLabel="System default"
+        />
+      </Field>
+
+      {supportsOutputSelection && (
+        <Field label="Speaker" hint="Which output device JARVIS's voice plays through.">
+          <SelectInput
+            value={speakerLabel}
+            onChange={setSpeakerLabel}
+            options={outputs.map((d) => d.label)}
+            defaultLabel="System default"
+          />
+        </Field>
+      )}
+
       <button
         onClick={handleSave}
         disabled={saving}
@@ -129,6 +155,38 @@ function Field({ label, hint, children }: { label: string; hint?: React.ReactNod
       {children}
       {hint && <p className="mt-1.5 text-[10.5px] leading-relaxed text-[var(--muted)]">{hint}</p>}
     </div>
+  );
+}
+
+function SelectInput({
+  value,
+  onChange,
+  options,
+  defaultLabel,
+}: {
+  value: string;
+  onChange: (v: string) => void;
+  options: string[];
+  defaultLabel: string;
+}) {
+  // Keep whatever's saved selectable even if it hasn't shown up in this
+  // enumeration yet (e.g. mic permission not granted on this page load) —
+  // otherwise the picker would look like it silently reset the choice.
+  const allOptions = value && !options.includes(value) ? [value, ...options] : options;
+  return (
+    <select
+      value={value}
+      onChange={(e) => onChange(e.target.value)}
+      className="w-full rounded-lg border px-3 py-2.5 text-sm outline-none focus:border-[var(--accent)]"
+      style={{ background: "var(--surface)", borderColor: "var(--border)", color: "var(--text)" }}
+    >
+      <option value="">{defaultLabel}</option>
+      {allOptions.map((label) => (
+        <option key={label} value={label}>
+          {label}
+        </option>
+      ))}
+    </select>
   );
 }
 
