@@ -1,17 +1,21 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@/lib/auth/AuthProvider";
 import { useChat } from "@/hooks/useChat";
 import { useSpeech } from "@/hooks/useSpeech";
-import { useMedia } from "@/hooks/useMedia";
 import { useReminderWatcher } from "@/hooks/useReminderWatcher";
 import { useToast } from "@/hooks/useToast";
-import { Avatar, type AvatarState } from "@/components/hud/Avatar";
-import { Header } from "@/components/hud/Header";
-import { MessageFeed } from "@/components/hud/MessageFeed";
-import { Composer } from "@/components/hud/Composer";
+import type { AvatarState } from "@/lib/avatarState";
+import { TopBar } from "@/components/hud/TopBar";
+import { SysMonitorPanel } from "@/components/hud/SysMonitorPanel";
+import { StatusButtons } from "@/components/hud/StatusButtons";
+import { CenterStage } from "@/components/hud/CenterStage";
+import { CollapsibleSection } from "@/components/hud/CollapsibleSection";
+import { ActivityLog } from "@/components/hud/ActivityLog";
+import { FileUploadZone } from "@/components/hud/FileUploadZone";
+import { CommandInput } from "@/components/hud/CommandInput";
 import { Panel } from "@/components/hud/Panel";
 import { SettingsPanel } from "@/components/hud/SettingsPanel";
 import { MemoryPanel } from "@/components/hud/MemoryPanel";
@@ -26,13 +30,14 @@ export default function Home() {
     user?.id ?? null
   );
   const speech = useSpeech(profile?.voice_name);
-  const media = useMedia();
   const { toast, message: toastMessage } = useToast();
 
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [memoryOpen, setMemoryOpen] = useState(false);
   const [pendingVoiceReply, setPendingVoiceReply] = useState(false);
   const [autoPromptedFor, setAutoPromptedFor] = useState<string | null>(null);
+  const [pendingImages, setPendingImages] = useState<ImageAttachment[]>([]);
+  const [muted, setMuted] = useState(false);
 
   useEffect(() => {
     if (!authLoading && !session) router.replace("/login");
@@ -46,7 +51,7 @@ export default function Home() {
 
   useReminderWatcher(user?.id ?? null, (text) => {
     toast(`Reminder: ${text}`);
-    speech.speak(`Reminder: ${text}`);
+    if (!muted) speech.speak(`Reminder: ${text}`);
   });
 
   useEffect(() => {
@@ -57,6 +62,31 @@ export default function Home() {
     }
   }, [error, clearError, toast]);
 
+  const handleInterrupt = useCallback(() => {
+    speech.stopSpeaking();
+    speech.stopListening();
+  }, [speech]);
+
+  useEffect(() => {
+    function onKeyDown(e: KeyboardEvent) {
+      if (e.key === "F4") {
+        e.preventDefault();
+        setMuted((m) => {
+          if (!m) speech.stopSpeaking();
+          return !m;
+        });
+      } else if (e.key === "F11") {
+        e.preventDefault();
+        if (document.fullscreenElement) document.exitFullscreen();
+        else document.documentElement.requestFullscreen().catch(() => {});
+      } else if (e.key === "Escape") {
+        handleInterrupt();
+      }
+    }
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [speech, handleInterrupt]);
+
   if (authLoading || !session || !profile || !historyLoaded) {
     return (
       <div className="flex min-h-screen items-center justify-center bg-[var(--bg)]">
@@ -65,12 +95,18 @@ export default function Home() {
     );
   }
 
-  const avatarState: AvatarState = chatLoading ? "thinking" : speech.speaking ? "speaking" : speech.listening ? "listening" : "idle";
+  const avatarState: AvatarState = chatLoading
+    ? "thinking"
+    : speech.speaking
+      ? "speaking"
+      : speech.listening
+        ? "listening"
+        : "idle";
 
   async function handleSend(text: string, images: ImageAttachment[], viaVoice = false) {
     if (viaVoice) setPendingVoiceReply(true);
     const reply = await sendText(text, images);
-    if (viaVoice && reply) speech.speak(reply);
+    if (viaVoice && reply && !muted) speech.speak(reply);
     setPendingVoiceReply(false);
   }
 
@@ -86,39 +122,85 @@ export default function Home() {
 
   return (
     <div
-      className="flex h-screen flex-col overflow-hidden"
+      className="flex h-screen flex-col overflow-hidden text-[var(--text)]"
       style={{ ["--accent-hue" as string]: profile.theme_hue }}
     >
       <Toast message={toastMessage} />
 
-      <Header
+      <TopBar
         assistantName={profile.assistant_name}
-        state={avatarState}
-        onOpenMemory={() => setMemoryOpen(true)}
         onOpenSettings={() => setSettingsOpen(true)}
-        onSignOut={async () => {
-          await signOut();
-          router.replace("/login");
-        }}
+        onOpenMemory={() => setMemoryOpen(true)}
       />
 
-      <div className="flex shrink-0 items-center justify-center border-b py-4" style={{ borderColor: "var(--border)" }}>
-        <Avatar state={avatarState} size={140} />
+      <div className="flex min-h-0 flex-1 flex-col overflow-y-auto lg:flex-row lg:overflow-hidden">
+        <aside
+          className="hidden w-[230px] shrink-0 flex-col justify-between overflow-y-auto border-r p-4 lg:flex"
+          style={{ borderColor: "var(--border)" }}
+        >
+          <SysMonitorPanel />
+          <div className="mt-4">
+            <StatusButtons aiCoreActive={!!profile.gemini_api_key} />
+          </div>
+        </aside>
+
+        <main className="min-w-0 shrink-0 lg:flex-1 lg:overflow-y-auto">
+          <CenterStage state={avatarState} />
+        </main>
+
+        <aside
+          className="flex w-full shrink-0 flex-col border-t lg:w-[360px] lg:overflow-y-auto lg:border-l lg:border-t-0 xl:w-[400px]"
+          style={{ borderColor: "var(--border)" }}
+        >
+          <CollapsibleSection title="Activity Log">
+            <ActivityLog messages={messages} loading={chatLoading && !pendingVoiceReply} />
+          </CollapsibleSection>
+
+          <CollapsibleSection title="File Upload" defaultOpen={false}>
+            <FileUploadZone onFile={(img) => setPendingImages((prev) => [...prev, img])} />
+          </CollapsibleSection>
+
+          <CollapsibleSection title="Command Input">
+            {pendingImages.length > 0 && (
+              <div className="mb-2 flex flex-wrap gap-1.5">
+                {pendingImages.map((img, i) => (
+                  <span
+                    key={i}
+                    className="rounded border px-2 py-0.5 text-[10px] text-[var(--muted)]"
+                    style={{ borderColor: "var(--border)" }}
+                  >
+                    📎 {img.label ?? "image"}
+                  </span>
+                ))}
+              </div>
+            )}
+            <CommandInput
+              onSend={(text) => {
+                handleSend(text, pendingImages, false);
+                setPendingImages([]);
+              }}
+              disabled={chatLoading}
+              listening={speech.listening}
+              sttSupported={speech.sttSupported}
+              onMicToggle={handleMicToggle}
+              onInterrupt={handleInterrupt}
+              interruptActive={chatLoading || speech.speaking || speech.listening}
+            />
+          </CollapsibleSection>
+        </aside>
       </div>
 
-      <MessageFeed messages={messages} loading={chatLoading && !pendingVoiceReply} assistantName={profile.assistant_name} />
-
-      <Composer
-        onSend={(text, images) => handleSend(text, images, false)}
-        disabled={chatLoading}
-        listening={speech.listening}
-        sttSupported={speech.sttSupported}
-        onMicToggle={handleMicToggle}
-        supportsScreenShare={media.supportsScreenShare}
-        supportsCamera={media.supportsCamera}
-        onScreenCapture={media.captureScreen}
-        onCamCapture={media.captureCamera}
-      />
+      <footer
+        className="flex shrink-0 items-center justify-between border-t px-4 py-1.5 text-[10px] text-[var(--muted)]"
+        style={{ borderColor: "var(--border)" }}
+      >
+        <span>
+          [F4] {muted ? "Unmute" : "Mute"} · [F11] Fullscreen · [ESC] Interrupt
+        </span>
+        <button onClick={() => signOut().then(() => router.replace("/login"))} className="hover:text-[var(--text)]">
+          Sign out
+        </button>
+      </footer>
 
       <Panel title="Settings" open={settingsOpen} onClose={() => setSettingsOpen(false)}>
         <SettingsPanel

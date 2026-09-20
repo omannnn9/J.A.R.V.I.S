@@ -1,22 +1,25 @@
 @import "tailwindcss";
 
 :root {
-  --bg: #07090f;
-  --bg-elevated: #0b0e16;
-  --surface: rgba(255, 255, 255, 0.04);
-  --surface-strong: rgba(255, 255, 255, 0.07);
-  --border: rgba(255, 255, 255, 0.08);
-  --text: #dde3ed;
-  --muted: #5e6a7e;
-  --green: #22c55e;
-  --green-dim: rgba(34, 197, 94, 0.14);
+  --bg: #050809;
+  --bg-elevated: #081012;
+  --surface: rgba(255, 255, 255, 0.03);
+  --surface-strong: rgba(255, 255, 255, 0.06);
+  --border: rgba(90, 220, 220, 0.16);
+  --text: #d8f3f3;
+  --muted: #4f7378;
+  --green: #22e08a;
+  --green-dim: rgba(34, 224, 138, 0.12);
+  --orange: #f5a623;
+  --pink: #ef6fa8;
   --red: #f87171;
+  --red-dim: rgba(248, 113, 113, 0.12);
 
-  /* Re-themeable accent — driven by the user's theme_hue setting */
-  --accent-hue: 239;
-  --accent: hsl(var(--accent-hue) 82% 66%);
-  --accent-dim: hsl(var(--accent-hue) 82% 66% / 0.15);
-  --accent-border: hsl(var(--accent-hue) 82% 66% / 0.3);
+  /* Re-themeable accent — driven by the user's theme_hue setting (default: cyan) */
+  --accent-hue: 187;
+  --accent: hsl(var(--accent-hue) 82% 60%);
+  --accent-dim: hsl(var(--accent-hue) 82% 60% / 0.13);
+  --accent-border: hsl(var(--accent-hue) 82% 60% / 0.3);
 }
 
 @theme inline {
