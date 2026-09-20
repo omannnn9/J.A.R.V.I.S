@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useRef, useState } from "react";
+import { resetLipSync, scheduleFallback, scheduleWord, stopLipSync } from "@/lib/head/lipSyncBus";
 
 type SpeechRecognitionLike = {
   continuous: boolean;
@@ -36,6 +37,7 @@ export function useSpeech(voiceName?: string) {
     // interrupt any speech so JARVIS doesn't hear itself
     if (typeof window !== "undefined" && "speechSynthesis" in window) {
       window.speechSynthesis.cancel();
+      stopLipSync();
     }
 
     const rec = new Ctor();
@@ -91,13 +93,41 @@ export function useSpeech(voiceName?: string) {
       }
       utter.rate = 1.02;
       utter.pitch = 1;
-      utter.onstart = () => setSpeaking(true);
+
+      let boundaryFired = false;
+      utter.onboundary = (event) => {
+        const e = event as SpeechSynthesisEvent & { name?: string };
+        if (e.name && e.name !== "word") return;
+        boundaryFired = true;
+        const charIndex = e.charIndex ?? 0;
+        const charLength = (e as unknown as { charLength?: number }).charLength;
+        const word =
+          typeof charLength === "number" && charLength > 0
+            ? text.slice(charIndex, charIndex + charLength)
+            : (text.slice(charIndex).match(/^\S+/)?.[0] ?? "");
+        scheduleWord(word, performance.now(), utter.rate);
+      };
+      utter.onstart = () => {
+        setSpeaking(true);
+        resetLipSync();
+        boundaryFired = false;
+        // Not every engine fires word-boundary events (older Safari); give it
+        // a moment, then lay the whole line's shapes down as an even estimate
+        // so the mouth still moves instead of sitting still while it talks.
+        setTimeout(() => {
+          if (!boundaryFired && window.speechSynthesis.speaking) {
+            scheduleFallback(text, performance.now(), utter.rate);
+          }
+        }, 220);
+      };
       utter.onend = () => {
         setSpeaking(false);
+        stopLipSync();
         onDone?.();
       };
       utter.onerror = () => {
         setSpeaking(false);
+        stopLipSync();
         onDone?.();
       };
       window.speechSynthesis.speak(utter);
@@ -111,6 +141,7 @@ export function useSpeech(voiceName?: string) {
     if (typeof window !== "undefined" && "speechSynthesis" in window) {
       window.speechSynthesis.cancel();
     }
+    stopLipSync();
     setSpeaking(false);
   }, []);
 

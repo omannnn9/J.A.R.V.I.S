@@ -103,10 +103,12 @@ export default function Home() {
         ? "listening"
         : "idle";
 
-  async function handleSend(text: string, images: ImageAttachment[], viaVoice = false) {
-    if (viaVoice) setPendingVoiceReply(true);
+  async function handleSend(text: string, images: ImageAttachment[]) {
+    setPendingVoiceReply(true);
     const reply = await sendText(text, images);
-    if (viaVoice && reply && !muted) speech.speak(reply);
+    // JARVIS is a voice-first assistant — every reply is spoken aloud, not
+    // just ones triggered by the mic, same as the desktop app.
+    if (reply && !muted) speech.speak(reply);
     setPendingVoiceReply(false);
   }
 
@@ -116,7 +118,7 @@ export default function Home() {
       return;
     }
     speech.startListening((transcript) => {
-      handleSend(transcript, [], true);
+      handleSend(transcript, []);
     });
   }
 
@@ -176,7 +178,7 @@ export default function Home() {
             )}
             <CommandInput
               onSend={(text) => {
-                handleSend(text, pendingImages, false);
+                handleSend(text, pendingImages);
                 setPendingImages([]);
               }}
               disabled={chatLoading}

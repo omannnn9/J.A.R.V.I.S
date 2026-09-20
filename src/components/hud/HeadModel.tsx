@@ -2,7 +2,8 @@
 
 import { useEffect, useRef } from "react";
 import * as THREE from "three";
-import { buildHead } from "@/lib/head/buildHead";
+import { buildHead, JAW_MAX, JAW_PIVOT, LIPS_IN } from "@/lib/head/buildHead";
+import { lipSyncState, tickLipSync } from "@/lib/head/lipSyncBus";
 import type { AvatarState } from "@/lib/avatarState";
 
 const STATE_COLOR: Record<AvatarState, number> = {
@@ -65,15 +66,54 @@ export function HeadModel({ state }: { state: AvatarState }) {
     const eyeR = eyeMesh(head.eyeR);
     scene.add(eyeL.mesh, eyeR.mesh);
 
+    // Mouth cavity — a filled fan over the inner lip ring. A wireframe jaw
+    // drop alone is too subtle a line-thickness change to read at HUD size;
+    // this is the wireframe equivalent of the desktop app's own reasoning
+    // for filling the mouth: "the single cheapest thing that makes an open
+    // mouth look like speech." Faded in from nothing, scaled by openness.
+    const cavityVertCount = LIPS_IN.length + 1;
+    const cavityCentroidIdx = LIPS_IN.length;
+    const cavityPositions = new Float32Array(cavityVertCount * 3);
+    const cavityIndex: number[] = [];
+    for (let i = 0; i < LIPS_IN.length; i++) {
+      const next = (i + 1) % LIPS_IN.length;
+      cavityIndex.push(cavityCentroidIdx, i, next);
+    }
+    const cavityGeom = new THREE.BufferGeometry();
+    cavityGeom.setAttribute("position", new THREE.BufferAttribute(cavityPositions, 3));
+    cavityGeom.setIndex(cavityIndex);
+    const cavityMat = new THREE.MeshBasicMaterial({
+      color: 0x0c3236,
+      transparent: true,
+      opacity: 0,
+      side: THREE.DoubleSide,
+      depthWrite: false,
+      depthTest: false,
+    });
+    const cavityMesh = new THREE.Mesh(cavityGeom, cavityMat);
+
+    // Bright rim on the same ring — a crisp edge around the cavity reads far
+    // better at this size than the fill alone.
+    const rimPositions = new Float32Array(LIPS_IN.length * 3);
+    const rimGeom = new THREE.BufferGeometry();
+    rimGeom.setAttribute("position", new THREE.BufferAttribute(rimPositions, 3));
+    const rimMat = new THREE.LineBasicMaterial({ color: 0x6ff0e8, transparent: true, opacity: 0 });
+    const rimLoop = new THREE.LineLoop(rimGeom, rimMat);
+
     const group = new THREE.Group();
-    group.add(wireframe, eyeL.mesh, eyeR.mesh);
+    group.add(wireframe, cavityMesh, rimLoop, eyeL.mesh, eyeR.mesh);
     scene.add(group);
 
     let raf = 0;
     let t = 0;
+    let lastTime = performance.now();
     let nextBlinkAt = 2 + Math.random() * 3;
     let blinkStart: number | null = null;
     const BLINK_DURATION = 0.16;
+
+    const totalVerts = head.positions.length / 3;
+    const deformed = new Float32Array(head.positions.length);
+    const edgeCount = head.edgeIndices.length / 2;
 
     function resize() {
       if (!mount) return;
@@ -87,10 +127,91 @@ export function HeadModel({ state }: { state: AvatarState }) {
     const ro = new ResizeObserver(resize);
     ro.observe(mount);
 
+    const posAttr = wireGeom.attributes.position as THREE.BufferAttribute;
+    const [, py, pz] = JAW_PIVOT; // jaw pivot's x is unused — the rotation only swings in y/z
+
+    // Deform the mouth region for this frame's (mouth openness, lip
+    // spread/round) and rebuild the wireframe's edge buffer from it — same
+    // two-step rig as avatar_mesh.py's `_pose()`: lip spread/round first,
+    // then the jaw rotation (which reads the already lip-shifted position).
+    function applyMouth(mouth: number, wide: number) {
+      deformed.set(head.positions);
+
+      if (Math.abs(wide) > 0.01 && mouth > 0) {
+        for (let i = 0; i < totalVerts; i++) {
+          const k = head.lipWeight[i] * (wide * mouth);
+          if (k === 0) continue;
+          const x = deformed[i * 3];
+          const y = deformed[i * 3 + 1];
+          deformed[i * 3] = x + k * (x - head.lipCentre[0]) * 0.55;
+          deformed[i * 3 + 1] = y + k * (y - head.lipCentre[1]) * 0.3;
+          deformed[i * 3 + 2] -= k * 0.055;
+        }
+      }
+
+      if (mouth > 0.004) {
+        for (let i = 0; i < totalVerts; i++) {
+          const jw = head.jawWeight[i];
+          if (jw === 0) continue;
+          const ang = jw * (mouth * JAW_MAX);
+          const ca = Math.cos(ang);
+          const sa = Math.sin(ang);
+          const dy = deformed[i * 3 + 1] - py;
+          const dz = deformed[i * 3 + 2] - pz;
+          deformed[i * 3 + 1] = py + dy * ca - dz * sa;
+          deformed[i * 3 + 2] = pz + dy * sa + dz * ca;
+        }
+      }
+
+      for (let e = 0; e < edgeCount; e++) {
+        const a = head.edgeIndices[e * 2];
+        const b = head.edgeIndices[e * 2 + 1];
+        posAttr.array[e * 6] = deformed[a * 3];
+        posAttr.array[e * 6 + 1] = deformed[a * 3 + 1];
+        posAttr.array[e * 6 + 2] = deformed[a * 3 + 2];
+        posAttr.array[e * 6 + 3] = deformed[b * 3];
+        posAttr.array[e * 6 + 4] = deformed[b * 3 + 1];
+        posAttr.array[e * 6 + 5] = deformed[b * 3 + 2];
+      }
+      posAttr.needsUpdate = true;
+
+      let cx = 0,
+        cy = 0,
+        cz = 0;
+      for (let i = 0; i < LIPS_IN.length; i++) {
+        const vi = LIPS_IN[i];
+        const x = deformed[vi * 3];
+        const y = deformed[vi * 3 + 1];
+        const z = deformed[vi * 3 + 2] - 0.02; // tucked just behind the lip ring
+        cavityPositions[i * 3] = x;
+        cavityPositions[i * 3 + 1] = y;
+        cavityPositions[i * 3 + 2] = z;
+        rimPositions[i * 3] = x;
+        rimPositions[i * 3 + 1] = y;
+        rimPositions[i * 3 + 2] = z + 0.01;
+        cx += x;
+        cy += y;
+        cz += z;
+      }
+      cavityPositions[cavityCentroidIdx * 3] = cx / LIPS_IN.length;
+      cavityPositions[cavityCentroidIdx * 3 + 1] = cy / LIPS_IN.length;
+      cavityPositions[cavityCentroidIdx * 3 + 2] = cz / LIPS_IN.length;
+      (cavityGeom.attributes.position as THREE.BufferAttribute).needsUpdate = true;
+      (rimGeom.attributes.position as THREE.BufferAttribute).needsUpdate = true;
+      cavityMat.opacity = Math.min(0.88, mouth * 1.15);
+      rimMat.opacity = Math.min(0.9, mouth * 1.3);
+    }
+
     function animate() {
       raf = requestAnimationFrame(animate);
-      t += 0.016;
+      const now = performance.now();
+      const dt = Math.max(0.001, Math.min(0.1, (now - lastTime) / 1000));
+      lastTime = now;
+      t += dt;
       const s = stateRef.current;
+
+      tickLipSync(now, dt);
+      applyMouth(lipSyncState.mouth, lipSyncState.wide);
 
       const breathe = s === "asleep" ? 1 : 1 + Math.sin(t * 0.7) * 0.012;
       group.scale.setScalar(breathe);
@@ -143,6 +264,10 @@ export function HeadModel({ state }: { state: AvatarState }) {
       ro.disconnect();
       wireGeom.dispose();
       wireMat.dispose();
+      cavityGeom.dispose();
+      cavityMat.dispose();
+      rimGeom.dispose();
+      rimMat.dispose();
       renderer.dispose();
       if (renderer.domElement.parentNode === mount) mount.removeChild(renderer.domElement);
     };

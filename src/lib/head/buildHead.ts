@@ -21,6 +21,12 @@ const WIRE_STRIDE = 3;
 
 export const EYE_L = [33, 7, 163, 144, 145, 153, 154, 155, 133, 173, 157, 158, 159, 160, 161, 246];
 export const EYE_R = [263, 249, 390, 373, 374, 380, 381, 382, 362, 398, 384, 385, 386, 387, 388, 466];
+export const LIPS_OUT = [61, 146, 91, 181, 84, 17, 314, 405, 321, 375, 291, 409, 270, 269, 267, 0, 37, 39, 40, 185];
+export const LIPS_IN = [78, 95, 88, 178, 87, 14, 317, 402, 318, 324, 308, 415, 310, 311, 312, 13, 82, 81, 80, 191];
+
+// Jaw-rig pivot and max swing, straight from avatar_mesh.py.
+export const JAW_PIVOT: Vec3 = [0.0, 0.06, -0.34];
+export const JAW_MAX = 0.115;
 
 function sub(a: Vec3, b: Vec3): Vec3 {
   return [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
@@ -259,10 +265,14 @@ function uniqueEdgesStrided(faces: number[], stride: number): [number, number][]
 }
 
 export interface HeadGeometry {
-  positions: Float32Array; // final normalised vertex positions
-  edgePositions: Float32Array; // pairs of [x,y,z,x,y,z,...] for LineSegments
+  positions: Float32Array; // rest-pose vertex positions (x,y,z triples)
+  edgePositions: Float32Array; // rest-pose edges, pairs of [x,y,z,x,y,z,...] for LineSegments
+  edgeIndices: Int32Array; // the same edges as vertex index pairs [a,b,a,b,...], for live deformation
   eyeL: Vec3;
   eyeR: Vec3;
+  lipCentre: Vec3;
+  jawWeight: Float32Array; // per-vertex jaw-drop influence, 0..1
+  lipWeight: Float32Array; // per-vertex lip spread/round influence
 }
 
 let cache: HeadGeometry | null = null;
@@ -296,6 +306,7 @@ export function buildHead(): HeadGeometry {
 
   const edges = uniqueEdgesStrided(mesh.faces, WIRE_STRIDE);
   const edgePositions = new Float32Array(edges.length * 6);
+  const edgeIndices = new Int32Array(edges.length * 2);
   edges.forEach(([a, b], i) => {
     edgePositions[i * 6] = positions[a * 3];
     edgePositions[i * 6 + 1] = positions[a * 3 + 1];
@@ -303,6 +314,8 @@ export function buildHead(): HeadGeometry {
     edgePositions[i * 6 + 3] = positions[b * 3];
     edgePositions[i * 6 + 4] = positions[b * 3 + 1];
     edgePositions[i * 6 + 5] = positions[b * 3 + 2];
+    edgeIndices[i * 2] = a;
+    edgeIndices[i * 2 + 1] = b;
   });
 
   const meanOf = (idxs: number[]): Vec3 => {
@@ -317,11 +330,47 @@ export function buildHead(): HeadGeometry {
     return [x / idxs.length, y / idxs.length, z / idxs.length];
   };
 
+  // ── jaw + lip rig weights, straight from avatar_mesh.py's build_head() ──
+  // Computed on the normalised positions, where by construction chin sits at
+  // y = -1.0 exactly (that's what the crown/chin normalisation solved for).
+  const lipCentre = meanOf(LIPS_OUT);
+  const mouthY = lipCentre[1];
+  const chinY = -1.0;
+  const totalVerts = positions.length / 3;
+
+  const jawWeight = new Float32Array(totalVerts);
+  const lipWeight = new Float32Array(totalVerts);
+  for (let i = 0; i < totalVerts; i++) {
+    const x = positions[i * 3];
+    const y = positions[i * 3 + 1];
+    const z = positions[i * 3 + 2];
+
+    if (i < nHead) {
+      const jawT = Math.max(0, Math.min(1, (mouthY - y) / (mouthY - chinY)));
+      let jaw = Math.pow(jawT, 0.8);
+      jaw *= Math.max(0, Math.min(1, 0.3 + 0.85 * (z / 0.55)));
+      jawWeight[i] = jaw;
+
+      const dy = (y - lipCentre[1]) / 0.155;
+      const dx = x / 0.3;
+      let lips = Math.exp(-(dy * dy));
+      lips *= Math.exp(-(dx * dx));
+      lips *= Math.max(0, Math.min(1, z / 0.4));
+      lipWeight[i] = lips;
+    }
+  }
+  for (const i of LIPS_IN.slice(0, 10)) jawWeight[i] = 1.0;
+  for (const i of LIPS_OUT.slice(0, 10)) jawWeight[i] = 0.95;
+
   cache = {
     positions,
     edgePositions,
+    edgeIndices,
     eyeL: meanOf(EYE_L),
     eyeR: meanOf(EYE_R),
+    lipCentre,
+    jawWeight,
+    lipWeight,
   };
   return cache;
 }
