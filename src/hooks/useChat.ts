@@ -1,7 +1,14 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Modality, type Content, type LiveServerMessage, type Part, type Session } from "@google/genai";
+import {
+  Modality,
+  type Content,
+  type LiveConnectConfig,
+  type LiveServerMessage,
+  type Part,
+  type Session,
+} from "@google/genai";
 import { getGenAI, DEFAULT_LIVE_MODEL } from "@/lib/gemini/client";
 import { executeTool, toolDeclarations } from "@/lib/actions/tools";
 import { getSupabaseBrowserClient } from "@/lib/supabase/client";
@@ -72,6 +79,13 @@ export function useChat(profile: Profile | null, userId: string | null) {
   const ignoreAudioRef = useRef(false);
   const lipCursorMsRef = useRef(0);
   const turnActiveRef = useRef(false);
+  // Preview-only fields (proactive audio, v1alpha) get dropped after the
+  // first handshake refusal — see attemptConnect/connect below.
+  const liveDegradedRef = useRef(false);
+  // Session-resumption handle from the server's last sessionResumptionUpdate,
+  // handed back on the next connect so a reconnect can pick the conversation
+  // back up instead of starting cold.
+  const resumeHandleRef = useRef<string | undefined>(undefined);
 
   // Mic capture (this session's audio, 16kHz PCM streamed out)
   const micStreamRef = useRef<MediaStream | null>(null);
@@ -234,6 +248,10 @@ export function useChat(profile: Profile | null, userId: string | null) {
         void handleToolCalls(message.toolCall.functionCalls);
       }
 
+      if (message.sessionResumptionUpdate?.resumable && message.sessionResumptionUpdate.newHandle) {
+        resumeHandleRef.current = message.sessionResumptionUpdate.newHandle;
+      }
+
       const sc = message.serverContent;
       if (!sc) return;
 
@@ -284,58 +302,122 @@ export function useChat(profile: Profile | null, userId: string | null) {
     }
   }, [stopAllPlayback]);
 
+  // ai.live.connect()'s own promise internally awaits the WebSocket's open
+  // event before ever resolving — if the handshake is refused (wrong model,
+  // wrong api version, no access), that promise hangs forever rather than
+  // rejecting. We build our own promise around it instead: settle it the
+  // moment onopen/onerror/onclose tell us the true outcome, and let the
+  // SDK's own promise resolve whenever it likes (it always does so *after*
+  // onopen, so by then our promise has already settled the same way).
+  const attemptConnect = useCallback(
+    (apiVersion: "v1alpha" | "v1beta"): Promise<Session> => {
+      const p = profileRef.current;
+      if (!p?.gemini_api_key) {
+        return Promise.reject(new Error("Add your Gemini API key in Settings to start talking."));
+      }
+
+      const genAI = getGenAI(p.gemini_api_key, apiVersion);
+      genAIClientRef.current = getGenAI(p.gemini_api_key);
+      const systemInstruction = buildSystemInstruction(p, memoriesRef.current);
+
+      const config: LiveConnectConfig = {
+        responseModalities: [Modality.AUDIO],
+        speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: p.voice_name || "Puck" } } },
+        systemInstruction,
+        tools: [{ functionDeclarations: toolDeclarations }],
+        inputAudioTranscription: {},
+        outputAudioTranscription: {},
+        sessionResumption: { handle: resumeHandleRef.current },
+        contextWindowCompression: { slidingWindow: {} },
+      };
+      // Proactive audio (JARVIS stays silent when speech isn't addressed to
+      // it) is a v1alpha-only preview field — only offered on the first,
+      // un-degraded attempt.
+      if (apiVersion === "v1alpha") {
+        config.proactivity = { proactiveAudio: true };
+      }
+
+      return new Promise<Session>((resolve, reject) => {
+        let settled = false;
+        genAI.live
+          .connect({
+            model: DEFAULT_LIVE_MODEL,
+            config,
+            callbacks: {
+              onmessage: handleServerMessage,
+              onerror: () => {
+                sessionRef.current = null;
+                if (!settled) {
+                  settled = true;
+                  reject(new Error("Live voice connection failed."));
+                  return;
+                }
+                setError("Live voice connection failed — check your Gemini API key and network.");
+                abortInFlight();
+              },
+              onclose: () => {
+                sessionRef.current = null;
+                if (!settled) {
+                  settled = true;
+                  reject(new Error("Live voice connection closed before it opened."));
+                  return;
+                }
+                abortInFlight();
+              },
+            },
+          })
+          .then((session) => {
+            settled = true;
+            sessionRef.current = session;
+            resolve(session);
+          })
+          .catch((e) => {
+            if (!settled) {
+              settled = true;
+              reject(e);
+            }
+          });
+      });
+    },
+    [handleServerMessage, abortInFlight]
+  );
+
+  // The first attempt asks for the preview-only fields (proactive audio,
+  // v1alpha); if the handshake itself is refused — a preview field this key
+  // or region doesn't have — we drop them and retry once on the stable
+  // v1beta config, mirroring the desktop app's own enhanced-live fallback.
   const connect = useCallback((): Promise<Session> => {
     if (sessionRef.current) return Promise.resolve(sessionRef.current);
     if (connectingRef.current) return connectingRef.current;
 
-    const p = profileRef.current;
-    if (!p?.gemini_api_key) {
-      return Promise.reject(new Error("Add your Gemini API key in Settings to start talking."));
-    }
-
-    const genAI = getGenAI(p.gemini_api_key);
-    genAIClientRef.current = genAI;
-    const systemInstruction = buildSystemInstruction(p, memoriesRef.current);
-
-    const promise = genAI.live
-      .connect({
-        model: DEFAULT_LIVE_MODEL,
-        config: {
-          responseModalities: [Modality.AUDIO],
-          speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: p.voice_name || "Puck" } } },
-          systemInstruction,
-          tools: [{ functionDeclarations: toolDeclarations }],
-          inputAudioTranscription: {},
-          outputAudioTranscription: {},
-        },
-        callbacks: {
-          onmessage: handleServerMessage,
-          onerror: () => {
+    const promise = (async () => {
+      try {
+        try {
+          return await attemptConnect(liveDegradedRef.current ? "v1beta" : "v1alpha");
+        } catch {
+          if (liveDegradedRef.current) {
             setError("Live voice connection failed — check your Gemini API key and network.");
-            sessionRef.current = null;
-            connectingRef.current = null;
-            abortInFlight();
-          },
-          onclose: () => {
-            sessionRef.current = null;
-            connectingRef.current = null;
-            abortInFlight();
-          },
-        },
-      })
-      .then((session) => {
-        sessionRef.current = session;
+            throw new Error("Live voice connection failed.");
+          }
+          liveDegradedRef.current = true;
+          try {
+            return await attemptConnect("v1beta");
+          } catch {
+            setError("Live voice connection failed — check your Gemini API key and network.");
+            throw new Error("Live voice connection failed.");
+          }
+        }
+      } finally {
+        // Runs before this promise settles, so by the time a caller's catch
+        // block (or a fresh connect() call) sees the outcome, the ref is
+        // already clear — a retry never returns this dead promise.
         connectingRef.current = null;
-        return session;
-      })
-      .catch((e) => {
-        connectingRef.current = null;
-        throw e;
-      });
+      }
+    })();
 
     connectingRef.current = promise;
     return promise;
-  }, [handleServerMessage, abortInFlight]);
+  }, [attemptConnect]);
 
   const sendText = useCallback(
     async (text: string, images?: ImageAttachment[]): Promise<string | null> => {
