@@ -1,69 +1,139 @@
-import Image from "next/image";
+"use client";
+
+import { useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
+import { useAuth } from "@/lib/auth/AuthProvider";
+import { useChat } from "@/hooks/useChat";
+import { useSpeech } from "@/hooks/useSpeech";
+import { useMedia } from "@/hooks/useMedia";
+import { useReminderWatcher } from "@/hooks/useReminderWatcher";
+import { useToast } from "@/hooks/useToast";
+import { Avatar, type AvatarState } from "@/components/hud/Avatar";
+import { Header } from "@/components/hud/Header";
+import { MessageFeed } from "@/components/hud/MessageFeed";
+import { Composer } from "@/components/hud/Composer";
+import { Panel } from "@/components/hud/Panel";
+import { SettingsPanel } from "@/components/hud/SettingsPanel";
+import { MemoryPanel } from "@/components/hud/MemoryPanel";
+import { Toast } from "@/components/hud/Toast";
+import type { ImageAttachment } from "@/hooks/useChat";
 
 export default function Home() {
+  const router = useRouter();
+  const { session, user, profile, loading: authLoading, updateProfile, signOut } = useAuth();
+  const { messages, sendText, loading: chatLoading, error, clearError, historyLoaded, reloadMemories } = useChat(
+    profile,
+    user?.id ?? null
+  );
+  const speech = useSpeech(profile?.voice_name);
+  const media = useMedia();
+  const { toast, message: toastMessage } = useToast();
+
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [memoryOpen, setMemoryOpen] = useState(false);
+  const [pendingVoiceReply, setPendingVoiceReply] = useState(false);
+  const [autoPromptedFor, setAutoPromptedFor] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!authLoading && !session) router.replace("/login");
+  }, [authLoading, session, router]);
+
+  // Prompt for a Gemini key once per freshly-loaded profile that doesn't have one yet.
+  if (profile && !profile.gemini_api_key && autoPromptedFor !== profile.id) {
+    setAutoPromptedFor(profile.id);
+    setSettingsOpen(true);
+  }
+
+  useReminderWatcher(user?.id ?? null, (text) => {
+    toast(`Reminder: ${text}`);
+    speech.speak(`Reminder: ${text}`);
+  });
+
+  useEffect(() => {
+    if (error) {
+      toast(error);
+      const t = setTimeout(clearError, 4000);
+      return () => clearTimeout(t);
+    }
+  }, [error, clearError, toast]);
+
+  if (authLoading || !session || !profile || !historyLoaded) {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-[var(--bg)]">
+        <div className="text-[13px] tracking-[3px] text-[var(--muted)]">LOADING…</div>
+      </div>
+    );
+  }
+
+  const avatarState: AvatarState = chatLoading ? "thinking" : speech.speaking ? "speaking" : speech.listening ? "listening" : "idle";
+
+  async function handleSend(text: string, images: ImageAttachment[], viaVoice = false) {
+    if (viaVoice) setPendingVoiceReply(true);
+    const reply = await sendText(text, images);
+    if (viaVoice && reply) speech.speak(reply);
+    setPendingVoiceReply(false);
+  }
+
+  function handleMicToggle() {
+    if (speech.listening) {
+      speech.stopListening();
+      return;
+    }
+    speech.startListening((transcript) => {
+      handleSend(transcript, [], true);
+    });
+  }
+
   return (
-    <div className="flex flex-col flex-1 items-center justify-center bg-zinc-50 font-sans dark:bg-black">
-      <main className="flex flex-1 w-full max-w-3xl flex-col items-center justify-between py-32 px-16 bg-white dark:bg-black sm:items-start">
-        <Image
-          className="dark:invert h-5 w-[100px]"
-          src="/next.svg"
-          alt="Next.js logo"
-          width={100}
-          height={20}
-          priority
+    <div
+      className="flex h-screen flex-col overflow-hidden"
+      style={{ ["--accent-hue" as string]: profile.theme_hue }}
+    >
+      <Toast message={toastMessage} />
+
+      <Header
+        assistantName={profile.assistant_name}
+        state={avatarState}
+        onOpenMemory={() => setMemoryOpen(true)}
+        onOpenSettings={() => setSettingsOpen(true)}
+        onSignOut={async () => {
+          await signOut();
+          router.replace("/login");
+        }}
+      />
+
+      <div className="flex shrink-0 items-center justify-center border-b py-4" style={{ borderColor: "var(--border)" }}>
+        <Avatar state={avatarState} size={140} />
+      </div>
+
+      <MessageFeed messages={messages} loading={chatLoading && !pendingVoiceReply} assistantName={profile.assistant_name} />
+
+      <Composer
+        onSend={(text, images) => handleSend(text, images, false)}
+        disabled={chatLoading}
+        listening={speech.listening}
+        sttSupported={speech.sttSupported}
+        onMicToggle={handleMicToggle}
+        supportsScreenShare={media.supportsScreenShare}
+        supportsCamera={media.supportsCamera}
+        onScreenCapture={media.captureScreen}
+        onCamCapture={media.captureCamera}
+      />
+
+      <Panel title="Settings" open={settingsOpen} onClose={() => setSettingsOpen(false)}>
+        <SettingsPanel
+          profile={profile}
+          onSave={async (patch) => {
+            await updateProfile(patch);
+            toast("Settings saved");
+          }}
+          onTestVoice={(voiceName) => speech.speakAs(`Hello, I'm ${profile.assistant_name}.`, voiceName)}
         />
-        <div className="flex flex-col items-center gap-6 text-center sm:items-start sm:text-left">
-          <h1 className="max-w-xs text-3xl font-semibold leading-10 tracking-tight text-black dark:text-zinc-50">
-            To get started, edit the{" "}
-            <code className="rounded bg-black/[.06] px-1.5 py-0.5 font-mono text-[0.9em] dark:bg-white/[.08]">
-              page.tsx
-            </code>{" "}
-            file.
-          </h1>
-          <p className="max-w-md text-lg leading-8 text-zinc-600 dark:text-zinc-400">
-            Looking for a starting point or more instructions? Head over to{" "}
-            <a
-              href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Templates
-            </a>{" "}
-            or the{" "}
-            <a
-              href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Learning
-            </a>{" "}
-            center.
-          </p>
-        </div>
-        <div className="flex flex-col gap-4 text-base font-medium sm:flex-row">
-          <a
-            className="flex h-12 w-full items-center justify-center gap-2 rounded-full bg-foreground px-5 text-background transition-colors hover:bg-[#383838] dark:hover:bg-[#ccc] md:w-[158px]"
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            <Image
-              className="dark:invert h-[14px] w-4"
-              src="/vercel.svg"
-              alt="Vercel logomark"
-              width={16}
-              height={14}
-            />
-            Deploy Now
-          </a>
-          <a
-            className="flex h-12 w-full items-center justify-center rounded-full border border-solid border-black/[.08] px-5 transition-colors hover:border-transparent hover:bg-black/[.04] dark:border-white/[.145] dark:hover:bg-[#1a1a1a] md:w-[158px]"
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Documentation
-          </a>
-        </div>
-      </main>
+      </Panel>
+
+      <Panel title="Memory" open={memoryOpen} onClose={() => setMemoryOpen(false)}>
+        <MemoryPanel userId={user!.id} open={memoryOpen} onChanged={reloadMemories} />
+      </Panel>
     </div>
   );
 }
