@@ -17,7 +17,7 @@ export function CenterStage({ state }: { state: AvatarState }) {
 
   return (
     <div className="flex h-full flex-col items-center justify-center gap-3 px-4 py-4">
-      <div className="h-[240px] w-full max-w-[520px] sm:h-[300px] md:h-[360px] lg:h-[420px]">
+      <div className="h-[320px] w-full max-w-[680px] sm:h-[440px] sm:max-w-[800px] md:h-[560px] md:max-w-[900px] lg:h-[680px] lg:max-w-[980px] xl:h-[760px] xl:max-w-[1080px]">
         <HeadModel state={state} />
       </div>
 

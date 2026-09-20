@@ -23,7 +23,19 @@ function TypewriterText({ text, skip, onDone }: { text: string; skip: boolean; o
   return <>{text.slice(0, shown)}</>;
 }
 
-export function ActivityLog({ messages, loading }: { messages: ChatMessage[]; loading: boolean }) {
+export function ActivityLog({
+  messages,
+  loading,
+  assistantName,
+  asleep,
+  wakeWordEnabled,
+}: {
+  messages: ChatMessage[];
+  loading: boolean;
+  assistantName: string;
+  asleep: boolean;
+  wakeWordEnabled: boolean;
+}) {
   const endRef = useRef<HTMLDivElement>(null);
   const [revealedIds, setRevealedIds] = useState<Set<string>>(() => new Set(messages.map((m) => m.id)));
 
@@ -35,14 +47,19 @@ export function ActivityLog({ messages, loading }: { messages: ChatMessage[]; lo
     setRevealedIds((prev) => (prev.has(id) ? prev : new Set(prev).add(id)));
   }
 
+  const emptyStateText =
+    asleep && wakeWordEnabled
+      ? `SYS: ${assistantName} online — sleeping. Say "Hey ${assistantName}" to wake me.`
+      : asleep
+        ? `SYS: ${assistantName} online — sleeping. Tap 👂 above to wake me.`
+        : `SYS: ${assistantName} online. Say hello, or type a command below.`;
+
   return (
     <div
       className="h-[34vh] min-h-[180px] overflow-y-auto rounded-md border p-2.5 font-mono text-[11.5px] leading-relaxed"
       style={{ borderColor: "var(--border)", background: "rgba(0,0,0,0.25)" }}
     >
-      {messages.length === 0 && !loading && (
-        <div className="text-[var(--muted)]">SYS: JARVIS online. Say hello, or type a command below.</div>
-      )}
+      {messages.length === 0 && !loading && <div className="text-[var(--muted)]">{emptyStateText}</div>}
       {messages.map((m) => {
         const skip = revealedIds.has(m.id);
         const onDone = () => markRevealed(m.id);
@@ -66,6 +83,15 @@ export function ActivityLog({ messages, loading }: { messages: ChatMessage[]; lo
                   <TypewriterText text={m.text} skip={skip} onDone={onDone} />
                 </span>
               </span>
+            )}
+            {m.imageDataUrl && (
+              // eslint-disable-next-line @next/next/no-img-element -- ephemeral data: URL, not a static asset
+              <img
+                src={m.imageDataUrl}
+                alt={m.text}
+                className="mt-1.5 max-w-full rounded-md border"
+                style={{ borderColor: "var(--border)" }}
+              />
             )}
           </div>
         );

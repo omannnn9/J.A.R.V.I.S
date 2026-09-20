@@ -1,10 +1,14 @@
 import { Type, type FunctionDeclaration, type GoogleGenAI } from "@google/genai";
 import { getSupabaseBrowserClient } from "@/lib/supabase/client";
-import { TEXT_MODEL } from "@/lib/gemini/client";
+import { TEXT_MODEL, IMAGE_MODEL } from "@/lib/gemini/client";
 
 export interface ToolContext {
   userId: string;
   genAI: GoogleGenAI;
+  // Image bytes never go back through the model's own context (they'd cost
+  // a fortune in tokens for no benefit) — this side channel is how a
+  // generated image actually reaches the screen.
+  onGeneratedImage?: (dataUrl: string, prompt: string) => void;
 }
 
 export const toolDeclarations: FunctionDeclaration[] = [
@@ -131,6 +135,18 @@ export const toolDeclarations: FunctionDeclaration[] = [
         },
       },
       required: ["action", "prompt"],
+    },
+  },
+  {
+    name: "generate_image",
+    description:
+      "Generate an image from a text description and show it to the user. Use whenever the user asks you to create, draw, generate, or make a picture/image/illustration of something.",
+    parameters: {
+      type: Type.OBJECT,
+      properties: {
+        prompt: { type: Type.STRING, description: "A detailed description of the image to generate." },
+      },
+      required: ["prompt"],
     },
   },
   {
@@ -364,6 +380,27 @@ export async function executeTool(
         return { result: res.text ?? "No response." };
       } catch (e) {
         return { error: e instanceof Error ? e.message : "Code helper failed." };
+      }
+    }
+
+    case "generate_image": {
+      const prompt = String(args.prompt ?? "").trim();
+      if (!prompt) return { error: "No description given." };
+      try {
+        const res = await ctx.genAI.models.generateImages({
+          model: IMAGE_MODEL,
+          prompt,
+          config: { numberOfImages: 1 },
+        });
+        const img = res.generatedImages?.[0]?.image;
+        if (!img?.imageBytes) {
+          return { error: res.generatedImages?.[0]?.raiFilteredReason ?? "No image came back." };
+        }
+        const dataUrl = `data:${img.mimeType ?? "image/png"};base64,${img.imageBytes}`;
+        ctx.onGeneratedImage?.(dataUrl, prompt);
+        return { ok: true, shown_to_user: true };
+      } catch (e) {
+        return { error: e instanceof Error ? e.message : "Image generation failed." };
       }
     }
 

@@ -7,7 +7,7 @@ import { lipSyncState, tickLipSync } from "@/lib/head/lipSyncBus";
 import type { AvatarState } from "@/lib/avatarState";
 
 const STATE_COLOR: Record<AvatarState, number> = {
-  asleep: 0x3a4a52,
+  asleep: 0x35d0c8,
   idle: 0x35d0c8,
   listening: 0x37e08a,
   thinking: 0x35d0c8,
@@ -28,8 +28,8 @@ export function HeadModel({ state }: { state: AvatarState }) {
     const head = buildHead();
 
     const scene = new THREE.Scene();
-    const camera = new THREE.PerspectiveCamera(32, 1, 0.1, 100);
-    camera.position.set(0, 0.05, 8.2);
+    const camera = new THREE.PerspectiveCamera(34, 1, 0.1, 100);
+    camera.position.set(0, 0.05, 4.8);
 
     const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
@@ -231,15 +231,18 @@ export function HeadModel({ state }: { state: AvatarState }) {
       for (const eye of [eyeL, eyeR]) {
         eye.mat.color.setHex(color);
         eye.glowMat.color.setHex(color);
-        eye.glowMat.opacity = s === "asleep" ? 0.08 : 0.25 + pulse * 0.25;
+        eye.glowMat.opacity = s === "asleep" ? 0.45 : 0.25 + pulse * 0.25;
       }
-      wireMat.color.setHex(s === "asleep" ? 0x203038 : 0x2fb8c9);
-      wireMat.opacity = s === "asleep" ? 0.25 : 0.5;
+      // Sleeping still reads as a fully-present, just-quiet head — not a
+      // faded-out one; only the eyes' steady (non-blinking) glow and the
+      // state label say it's dormant.
+      wireMat.color.setHex(0x2fb8c9);
+      wireMat.opacity = s === "asleep" ? 0.45 : 0.5;
 
       // blink: a short triangular pulse that closes the eyes once every few seconds
       let eyeScale = 1;
       if (s === "asleep") {
-        eyeScale = 0.35;
+        eyeScale = 0.85;
       } else {
         if (blinkStart === null && t > nextBlinkAt) blinkStart = t;
         if (blinkStart !== null) {

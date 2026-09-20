@@ -50,7 +50,9 @@ export default function Home() {
   const [memoryOpen, setMemoryOpen] = useState(false);
   const [autoPromptedFor, setAutoPromptedFor] = useState<string | null>(null);
   const [pendingImages, setPendingImages] = useState<ImageAttachment[]>([]);
-  const [asleep, setAsleep] = useState(false);
+  // Starts asleep, same resting state as the desktop app with wake word on
+  // — mic stays closed until "Hey Jarvis" or a manual wake.
+  const [asleep, setAsleep] = useState(true);
   // Tracks whether the currently-open mic was started by holding the PTT
   // chord, so releasing it only stops mic sessions PTT itself started —
   // never one the user turned on with the manual mic button.
@@ -221,7 +223,13 @@ export default function Home() {
           style={{ borderColor: "var(--border)" }}
         >
           <CollapsibleSection title="Activity Log">
-            <ActivityLog messages={messages} loading={chatLoading} />
+            <ActivityLog
+              messages={messages}
+              loading={chatLoading}
+              assistantName={assistantName}
+              asleep={asleep}
+              wakeWordEnabled={!!profile.wake_word_enabled}
+            />
           </CollapsibleSection>
 
           <CollapsibleSection title="File Upload" defaultOpen={false}>

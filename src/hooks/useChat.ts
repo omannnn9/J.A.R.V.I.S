@@ -22,6 +22,10 @@ export interface ChatMessage {
   role: "user" | "assistant" | "system";
   text: string;
   ts: number;
+  // Session-only — a generated image is never persisted (a data URL is far
+  // too large for a text column), so this is unset again after a reload;
+  // the text caption alone is what survives in history.
+  imageDataUrl?: string;
 }
 
 export interface ImageAttachment {
@@ -144,8 +148,8 @@ export function useChat(profile: Profile | null, userId: string | null) {
   );
 
   const appendMessage = useCallback(
-    (role: ChatMessage["role"], text: string) => {
-      const msg: ChatMessage = { id: crypto.randomUUID(), role, text, ts: Date.now() };
+    (role: ChatMessage["role"], text: string, imageDataUrl?: string) => {
+      const msg: ChatMessage = { id: crypto.randomUUID(), role, text, ts: Date.now(), imageDataUrl };
       setMessages((prev) => [...prev, msg]);
       void persist(role, text);
     },
@@ -232,6 +236,7 @@ export function useChat(profile: Profile | null, userId: string | null) {
           const result = await executeTool(call.name ?? "", call.args ?? {}, {
             userId: userIdRef.current!,
             genAI,
+            onGeneratedImage: (dataUrl, prompt) => appendMessage("assistant", `Generated image: ${prompt}`, dataUrl),
           });
           if (call.name === "remember_fact" || call.name === "forget_fact") void loadMemories();
           return { id: call.id, name: call.name, response: { result } };
@@ -239,7 +244,7 @@ export function useChat(profile: Profile | null, userId: string | null) {
       );
       session.sendToolResponse({ functionResponses: responses });
     },
-    [loadMemories]
+    [loadMemories, appendMessage]
   );
 
   const finalizeTurn = useCallback(() => {

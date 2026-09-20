@@ -6,6 +6,7 @@ export const VISION_MODEL = "gemini-flash-latest";
 // preview models come and go quickly, and this is the one the real app is
 // actually built and tested against.
 export const DEFAULT_LIVE_MODEL = "models/gemini-3.1-flash-live-preview";
+export const IMAGE_MODEL = "imagen-4.0-generate-001";
 
 export function getGenAI(apiKey: string, apiVersion?: "v1alpha" | "v1beta") {
   return new GoogleGenAI(apiVersion ? { apiKey, apiVersion } : { apiKey });
