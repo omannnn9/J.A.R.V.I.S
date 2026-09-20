@@ -6,11 +6,9 @@ import type { Profile } from "@/lib/supabase/types";
 export function SettingsPanel({
   profile,
   onSave,
-  onTestVoice,
 }: {
   profile: Profile;
   onSave: (patch: Partial<Profile>) => Promise<void>;
-  onTestVoice: (voiceName: string) => void;
 }) {
   const [assistantName, setAssistantName] = useState(profile.assistant_name);
   const [displayName, setDisplayName] = useState(profile.display_name);
@@ -64,17 +62,11 @@ export function SettingsPanel({
         </div>
       </Field>
 
-      <Field label="Voice" hint="Matched against your browser's available text-to-speech voices.">
-        <div className="flex gap-2">
-          <TextInput value={voiceName} onChange={setVoiceName} placeholder="e.g. Google US English" />
-          <button
-            onClick={() => onTestVoice(voiceName)}
-            className="shrink-0 rounded-lg border px-3 text-xs text-[var(--muted)] hover:text-[var(--text)]"
-            style={{ borderColor: "var(--border)" }}
-          >
-            Test
-          </button>
-        </div>
+      <Field
+        label="Voice"
+        hint="A Gemini Live native voice name — e.g. Puck, Charon, Kore, Fenrir, Aoede. Takes effect on your next reconnect (reload the page)."
+      >
+        <TextInput value={voiceName} onChange={setVoiceName} placeholder="Puck" />
       </Field>
 
       <Field

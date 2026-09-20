@@ -1,10 +1,9 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@/lib/auth/AuthProvider";
 import { useChat } from "@/hooks/useChat";
-import { useSpeech } from "@/hooks/useSpeech";
 import { useReminderWatcher } from "@/hooks/useReminderWatcher";
 import { useToast } from "@/hooks/useToast";
 import type { AvatarState } from "@/lib/avatarState";
@@ -25,19 +24,28 @@ import type { ImageAttachment } from "@/hooks/useChat";
 export default function Home() {
   const router = useRouter();
   const { session, user, profile, loading: authLoading, updateProfile, signOut } = useAuth();
-  const { messages, sendText, loading: chatLoading, error, clearError, historyLoaded, reloadMemories } = useChat(
-    profile,
-    user?.id ?? null
-  );
-  const speech = useSpeech(profile?.voice_name);
+  const {
+    messages,
+    sendText,
+    loading: chatLoading,
+    speaking,
+    muted,
+    setMuted,
+    micOn,
+    micSupported,
+    toggleMic,
+    interrupt,
+    error,
+    clearError,
+    historyLoaded,
+    reloadMemories,
+  } = useChat(profile, user?.id ?? null);
   const { toast, message: toastMessage } = useToast();
 
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [memoryOpen, setMemoryOpen] = useState(false);
-  const [pendingVoiceReply, setPendingVoiceReply] = useState(false);
   const [autoPromptedFor, setAutoPromptedFor] = useState<string | null>(null);
   const [pendingImages, setPendingImages] = useState<ImageAttachment[]>([]);
-  const [muted, setMuted] = useState(false);
 
   useEffect(() => {
     if (!authLoading && !session) router.replace("/login");
@@ -51,7 +59,6 @@ export default function Home() {
 
   useReminderWatcher(user?.id ?? null, (text) => {
     toast(`Reminder: ${text}`);
-    if (!muted) speech.speak(`Reminder: ${text}`);
   });
 
   useEffect(() => {
@@ -62,30 +69,22 @@ export default function Home() {
     }
   }, [error, clearError, toast]);
 
-  const handleInterrupt = useCallback(() => {
-    speech.stopSpeaking();
-    speech.stopListening();
-  }, [speech]);
-
   useEffect(() => {
     function onKeyDown(e: KeyboardEvent) {
       if (e.key === "F4") {
         e.preventDefault();
-        setMuted((m) => {
-          if (!m) speech.stopSpeaking();
-          return !m;
-        });
+        setMuted(!muted);
       } else if (e.key === "F11") {
         e.preventDefault();
         if (document.fullscreenElement) document.exitFullscreen();
         else document.documentElement.requestFullscreen().catch(() => {});
       } else if (e.key === "Escape") {
-        handleInterrupt();
+        interrupt();
       }
     }
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [speech, handleInterrupt]);
+  }, [muted, setMuted, interrupt]);
 
   if (authLoading || !session || !profile || !historyLoaded) {
     return (
@@ -95,31 +94,10 @@ export default function Home() {
     );
   }
 
-  const avatarState: AvatarState = chatLoading
-    ? "thinking"
-    : speech.speaking
-      ? "speaking"
-      : speech.listening
-        ? "listening"
-        : "idle";
+  const avatarState: AvatarState = chatLoading ? "thinking" : speaking ? "speaking" : micOn ? "listening" : "idle";
 
-  async function handleSend(text: string, images: ImageAttachment[]) {
-    setPendingVoiceReply(true);
-    const reply = await sendText(text, images);
-    // JARVIS is a voice-first assistant — every reply is spoken aloud, not
-    // just ones triggered by the mic, same as the desktop app.
-    if (reply && !muted) speech.speak(reply);
-    setPendingVoiceReply(false);
-  }
-
-  function handleMicToggle() {
-    if (speech.listening) {
-      speech.stopListening();
-      return;
-    }
-    speech.startListening((transcript) => {
-      handleSend(transcript, []);
-    });
+  function handleSend(text: string, images: ImageAttachment[]) {
+    void sendText(text, images);
   }
 
   return (
@@ -155,7 +133,7 @@ export default function Home() {
           style={{ borderColor: "var(--border)" }}
         >
           <CollapsibleSection title="Activity Log">
-            <ActivityLog messages={messages} loading={chatLoading && !pendingVoiceReply} />
+            <ActivityLog messages={messages} loading={chatLoading} />
           </CollapsibleSection>
 
           <CollapsibleSection title="File Upload" defaultOpen={false}>
@@ -182,11 +160,11 @@ export default function Home() {
                 setPendingImages([]);
               }}
               disabled={chatLoading}
-              listening={speech.listening}
-              sttSupported={speech.sttSupported}
-              onMicToggle={handleMicToggle}
-              onInterrupt={handleInterrupt}
-              interruptActive={chatLoading || speech.speaking || speech.listening}
+              listening={micOn}
+              sttSupported={micSupported}
+              onMicToggle={() => void toggleMic()}
+              onInterrupt={interrupt}
+              interruptActive={chatLoading || speaking || micOn}
             />
           </CollapsibleSection>
         </aside>
@@ -196,9 +174,7 @@ export default function Home() {
         className="flex shrink-0 items-center justify-between border-t px-4 py-1.5 text-[10px] text-[var(--muted)]"
         style={{ borderColor: "var(--border)" }}
       >
-        <span>
-          [F4] {muted ? "Unmute" : "Mute"} · [F11] Fullscreen · [ESC] Interrupt
-        </span>
+        <span>[F4] {muted ? "Unmute" : "Mute"} · [F11] Fullscreen · [ESC] Interrupt</span>
         <button onClick={() => signOut().then(() => router.replace("/login"))} className="hover:text-[var(--text)]">
           Sign out
         </button>
@@ -209,9 +185,8 @@ export default function Home() {
           profile={profile}
           onSave={async (patch) => {
             await updateProfile(patch);
-            toast("Settings saved");
+            toast("Settings saved — reconnect (reload) for a new voice to take effect");
           }}
-          onTestVoice={(voiceName) => speech.speakAs(`Hello, I'm ${profile.assistant_name}.`, voiceName)}
         />
       </Panel>
 

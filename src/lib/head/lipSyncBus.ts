@@ -1,12 +1,12 @@
 // Drives the head's mouth from what's actually being said, the same two-part
 // idea as the desktop app's viseme.py + avatar.py: the text supplies *which*
-// shape (closures on m/b/p, spread on i/e, round on u/o), timing comes from
-// real word-boundary events fired by the browser's speech synthesizer where
-// available, or an even estimate across the utterance where it isn't.
+// shape (closures on m/b/p, spread on i/e, round on u/o); timing comes from
+// the real Gemini Live output transcript, laid across each audio chunk's
+// actual playback duration as useChat schedules it.
 //
 // This is a small module-level bus rather than a hook: there is exactly one
-// voice and one face on screen, useSpeech feeds it from the utterance
-// lifecycle, and HeadModel reads it once per rendered frame.
+// voice and one face on screen, useChat feeds it from the live session's
+// message stream, and HeadModel reads it once per rendered frame.
 import { textToVisemes, VISEMES } from "./viseme";
 
 interface Segment {
@@ -55,18 +55,19 @@ export function scheduleWord(word: string, startMs: number, rate: number) {
   }
 }
 
-/** Fallback for engines that never fire word-boundary events (older Safari):
- * lay the whole utterance's words evenly across an estimated total duration. */
-export function scheduleFallback(text: string, startMs: number, rate: number) {
+/** Live voice: lay a chunk of transcript across a caller-supplied duration
+ * (the actual playback time of the audio it was transcribed from), rather
+ * than estimating one — the caller already knows exactly how long its audio
+ * chunk runs. Words are spread proportionally to their length within it. */
+export function scheduleTextSpan(text: string, startMs: number, durationMs: number) {
   const words = text.split(/\s+/).filter(Boolean);
-  if (words.length === 0) return;
+  if (words.length === 0 || durationMs <= 0) return;
   const totalChars = words.reduce((s, w) => s + w.length, 0) || 1;
-  const totalMs = Math.max(300, (totalChars / (BASE_CPS * Math.max(0.5, rate))) * 1000);
   let t = startMs;
   for (const w of words) {
     const share = w.length / totalChars;
-    scheduleWord(w, t, rate);
-    t += totalMs * share;
+    scheduleWord(w, t, 1.0);
+    t += durationMs * share;
   }
 }
 
