@@ -201,6 +201,8 @@ export default function Home() {
         onOpenMemory={() => setMemoryOpen(true)}
         asleep={asleep}
         onToggleSleep={toggleSleep}
+        muted={muted}
+        onToggleMute={() => setMuted(!muted)}
       />
 
       <div className="flex min-h-0 flex-1 flex-col overflow-y-auto lg:flex-row lg:overflow-hidden">
@@ -219,24 +221,36 @@ export default function Home() {
         </main>
 
         <aside
-          className="flex w-full shrink-0 flex-col border-t lg:w-[360px] lg:overflow-y-auto lg:border-l lg:border-t-0 xl:w-[400px]"
+          className="flex min-h-0 w-full shrink-0 flex-1 flex-col border-t lg:w-[360px] lg:flex-none lg:overflow-y-auto lg:border-l lg:border-t-0 xl:w-[400px]"
           style={{ borderColor: "var(--border)" }}
         >
-          <CollapsibleSection title="Activity Log">
-            <ActivityLog
-              messages={messages}
-              loading={chatLoading}
-              assistantName={assistantName}
-              asleep={asleep}
-              wakeWordEnabled={!!profile.wake_word_enabled}
-            />
-          </CollapsibleSection>
+          <div className="min-h-0 flex-1 lg:flex-none">
+            <CollapsibleSection title="Activity Log">
+              <ActivityLog
+                messages={messages}
+                loading={chatLoading}
+                assistantName={assistantName}
+                asleep={asleep}
+                wakeWordEnabled={!!profile.wake_word_enabled}
+              />
+            </CollapsibleSection>
 
-          <CollapsibleSection title="File Upload" defaultOpen={false}>
-            <FileUploadZone onFile={(img) => setPendingImages((prev) => [...prev, img])} />
-          </CollapsibleSection>
+            <CollapsibleSection title="File Upload" defaultOpen={false}>
+              <FileUploadZone onFile={(img) => setPendingImages((prev) => [...prev, img])} />
+            </CollapsibleSection>
+          </div>
 
-          <CollapsibleSection title="Command Input">
+          {/* Always visible, never collapsed — this is the primary way to talk
+              to JARVIS, so it shouldn't be one accordion tap away. On mobile
+              it sticks to the bottom of the scrolling column instead of
+              landing wherever the log/upload sections happen to end. */}
+          <div
+            className="sticky bottom-0 z-10 border-t px-4 py-2.5 lg:static"
+            style={{ borderColor: "var(--border)", background: "var(--bg)" }}
+          >
+            <div className="mb-1.5 text-[11px] font-bold uppercase tracking-[2px] text-[var(--accent)]">
+              Command Input
+            </div>
             {pendingImages.length > 0 && (
               <div className="mb-2 flex flex-wrap gap-1.5">
                 {pendingImages.map((img, i) => (
@@ -262,7 +276,7 @@ export default function Home() {
               onInterrupt={interrupt}
               interruptActive={chatLoading || speaking || micOn}
             />
-          </CollapsibleSection>
+          </div>
         </aside>
       </div>
 
@@ -270,7 +284,9 @@ export default function Home() {
         className="flex shrink-0 items-center justify-between border-t px-4 py-1.5 text-[10px] text-[var(--muted)]"
         style={{ borderColor: "var(--border)" }}
       >
-        <span>[F4] {muted ? "Unmute" : "Mute"} · [F11] Fullscreen · [ESC] Interrupt</span>
+        <span className="hidden sm:inline">
+          [F4] {muted ? "Unmute" : "Mute"} · [F11] Fullscreen · [ESC] Interrupt
+        </span>
         <button onClick={() => signOut().then(() => router.replace("/login"))} className="hover:text-[var(--text)]">
           Sign out
         </button>
