@@ -10,18 +10,27 @@ export function FileUploadZone({ onFile }: { onFile: (file: ImageAttachment) => 
   const [lastFile, setLastFile] = useState<string | null>(null);
   const media = useMedia();
 
+  function isAccepted(file: File): boolean {
+    if (file.type.startsWith("image/")) return true;
+    if (file.type === "application/pdf" || file.type === "text/plain" || file.type === "text/markdown") return true;
+    // Browsers are inconsistent about the MIME type they report for .md files
+    // (often empty), so fall back to the extension for the text formats.
+    return /\.(txt|md)$/i.test(file.name);
+  }
+
   function handleFiles(files: FileList | null) {
     const file = files?.[0];
     if (!file) return;
-    if (!file.type.startsWith("image/")) {
-      setLastFile(`${file.name} — only images can be sent to JARVIS right now`);
+    if (!isAccepted(file)) {
+      setLastFile(`${file.name} — only images, PDF, or text/markdown files can be sent to JARVIS`);
       return;
     }
+    const mimeType = file.type || (file.name.toLowerCase().endsWith(".md") ? "text/markdown" : "text/plain");
     const reader = new FileReader();
     reader.onload = () => {
       const result = String(reader.result || "");
       const [, base64] = result.split(",");
-      onFile({ mimeType: file.type, data: base64, label: file.name });
+      onFile({ mimeType, data: base64, label: file.name });
       setLastFile(file.name);
     };
     reader.readAsDataURL(file);

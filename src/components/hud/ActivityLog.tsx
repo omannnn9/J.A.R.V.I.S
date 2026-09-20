@@ -1,14 +1,39 @@
 "use client";
 
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { ChatMessage } from "@/hooks/useChat";
+
+// The desktop app's log doesn't just append lines — they type themselves out
+// character by character (6ms/char). Historical messages already loaded on
+// mount skip the animation and render instantly; only freshly-appended ones
+// type out.
+function TypewriterText({ text, skip, onDone }: { text: string; skip: boolean; onDone: () => void }) {
+  const [shown, setShown] = useState(skip ? text.length : 0);
+
+  useEffect(() => {
+    if (skip) return;
+    if (shown >= text.length) {
+      onDone();
+      return;
+    }
+    const t = setTimeout(() => setShown((n) => n + 1), 6);
+    return () => clearTimeout(t);
+  }, [shown, skip, text, onDone]);
+
+  return <>{text.slice(0, shown)}</>;
+}
 
 export function ActivityLog({ messages, loading }: { messages: ChatMessage[]; loading: boolean }) {
   const endRef = useRef<HTMLDivElement>(null);
+  const [revealedIds, setRevealedIds] = useState<Set<string>>(() => new Set(messages.map((m) => m.id)));
 
   useEffect(() => {
     endRef.current?.scrollIntoView({ block: "end" });
   }, [messages.length, loading]);
+
+  function markRevealed(id: string) {
+    setRevealedIds((prev) => (prev.has(id) ? prev : new Set(prev).add(id)));
+  }
 
   return (
     <div
@@ -18,23 +43,33 @@ export function ActivityLog({ messages, loading }: { messages: ChatMessage[]; lo
       {messages.length === 0 && !loading && (
         <div className="text-[var(--muted)]">SYS: JARVIS online. Say hello, or type a command below.</div>
       )}
-      {messages.map((m) => (
-        <div key={m.id} className="mb-1.5 break-words">
-          {m.role === "system" ? (
-            <span className="text-[var(--muted)]">SYS: {m.text}</span>
-          ) : m.role === "user" ? (
-            <span>
-              <span className="text-[var(--muted)]">YOU: </span>
-              <span className="text-[var(--text)]">{m.text}</span>
-            </span>
-          ) : (
-            <span>
-              <span className="text-[var(--accent)]">JARVIS: </span>
-              <span className="text-[var(--text)]">{m.text}</span>
-            </span>
-          )}
-        </div>
-      ))}
+      {messages.map((m) => {
+        const skip = revealedIds.has(m.id);
+        const onDone = () => markRevealed(m.id);
+        return (
+          <div key={m.id} className="mb-1.5 break-words">
+            {m.role === "system" ? (
+              <span className="text-[var(--muted)]">
+                SYS: <TypewriterText text={m.text} skip={skip} onDone={onDone} />
+              </span>
+            ) : m.role === "user" ? (
+              <span>
+                <span className="text-[var(--muted)]">YOU: </span>
+                <span className="text-[var(--text)]">
+                  <TypewriterText text={m.text} skip={skip} onDone={onDone} />
+                </span>
+              </span>
+            ) : (
+              <span>
+                <span className="text-[var(--accent)]">JARVIS: </span>
+                <span className="text-[var(--text)]">
+                  <TypewriterText text={m.text} skip={skip} onDone={onDone} />
+                </span>
+              </span>
+            )}
+          </div>
+        );
+      })}
       {loading && <div className="text-[var(--accent)] opacity-70">JARVIS: …</div>}
       <div ref={endRef} />
     </div>

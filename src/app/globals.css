@@ -40,8 +40,10 @@ body {
   color: var(--text);
 }
 
+/* The desktop app's whole HUD is set in "Courier New" — a deliberate
+   terminal/heads-up-display aesthetic, not an incidental default. */
 body {
-  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+  font-family: "Courier New", "Courier Prime", Courier, ui-monospace, monospace;
 }
 
 * {

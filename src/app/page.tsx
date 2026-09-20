@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@/lib/auth/AuthProvider";
 import { useChat } from "@/hooks/useChat";
@@ -46,6 +46,11 @@ export default function Home() {
   const [memoryOpen, setMemoryOpen] = useState(false);
   const [autoPromptedFor, setAutoPromptedFor] = useState<string | null>(null);
   const [pendingImages, setPendingImages] = useState<ImageAttachment[]>([]);
+  const [asleep, setAsleep] = useState(false);
+  // Tracks whether the currently-open mic was started by holding the PTT
+  // chord, so releasing it only stops mic sessions PTT itself started —
+  // never one the user turned on with the manual mic button.
+  const pttActiveRef = useRef(false);
 
   useEffect(() => {
     if (!authLoading && !session) router.replace("/login");
@@ -80,11 +85,29 @@ export default function Home() {
         else document.documentElement.requestFullscreen().catch(() => {});
       } else if (e.key === "Escape") {
         interrupt();
+      } else if (e.key === " " && e.ctrlKey && !e.repeat) {
+        // Push-to-talk (Ctrl+Space, held) — window-scoped, same as the
+        // desktop app's fallback on platforms without a true global hotkey.
+        e.preventDefault();
+        if (!asleep && !micOn) {
+          pttActiveRef.current = true;
+          void toggleMic();
+        }
+      }
+    }
+    function onKeyUp(e: KeyboardEvent) {
+      if (e.key === " " && pttActiveRef.current) {
+        pttActiveRef.current = false;
+        if (micOn) void toggleMic();
       }
     }
     window.addEventListener("keydown", onKeyDown);
-    return () => window.removeEventListener("keydown", onKeyDown);
-  }, [muted, setMuted, interrupt]);
+    window.addEventListener("keyup", onKeyUp);
+    return () => {
+      window.removeEventListener("keydown", onKeyDown);
+      window.removeEventListener("keyup", onKeyUp);
+    };
+  }, [muted, setMuted, interrupt, asleep, micOn, toggleMic]);
 
   if (authLoading || !session || !profile || !historyLoaded) {
     return (
@@ -94,10 +117,44 @@ export default function Home() {
     );
   }
 
-  const avatarState: AvatarState = chatLoading ? "thinking" : speaking ? "speaking" : micOn ? "listening" : "idle";
+  const assistantName = profile.assistant_name;
+
+  const avatarState: AvatarState = asleep
+    ? "asleep"
+    : chatLoading
+      ? "thinking"
+      : speaking
+        ? "speaking"
+        : micOn
+          ? "listening"
+          : "idle";
 
   function handleSend(text: string, images: ImageAttachment[]) {
+    if (asleep) {
+      toast(`${assistantName} is asleep — tap 👂 to wake first.`);
+      return;
+    }
     void sendText(text, images);
+  }
+
+  function handleMicToggle() {
+    if (asleep) {
+      toast(`${assistantName} is asleep — tap 👂 to wake first.`);
+      return;
+    }
+    void toggleMic();
+  }
+
+  function toggleSleep() {
+    if (asleep) {
+      setAsleep(false);
+      toast(`${assistantName} is awake.`);
+      return;
+    }
+    interrupt();
+    if (micOn) void toggleMic();
+    setAsleep(true);
+    toast(`${assistantName} is asleep — tap 👂 to wake.`);
   }
 
   return (
@@ -111,6 +168,8 @@ export default function Home() {
         assistantName={profile.assistant_name}
         onOpenSettings={() => setSettingsOpen(true)}
         onOpenMemory={() => setMemoryOpen(true)}
+        asleep={asleep}
+        onToggleSleep={toggleSleep}
       />
 
       <div className="flex min-h-0 flex-1 flex-col overflow-y-auto lg:flex-row lg:overflow-hidden">
@@ -159,10 +218,10 @@ export default function Home() {
                 handleSend(text, pendingImages);
                 setPendingImages([]);
               }}
-              disabled={chatLoading}
+              disabled={chatLoading || asleep}
               listening={micOn}
               sttSupported={micSupported}
-              onMicToggle={() => void toggleMic()}
+              onMicToggle={handleMicToggle}
               onInterrupt={interrupt}
               interruptActive={chatLoading || speaking || micOn}
             />

@@ -106,6 +106,34 @@ export const toolDeclarations: FunctionDeclaration[] = [
     },
   },
   {
+    name: "code_helper",
+    description:
+      "Write, explain, review, fix, or optimize a piece of code. Use whenever the user asks you to write a function/script, explain what code does, find bugs, review code quality, or make code faster/cleaner.",
+    parameters: {
+      type: Type.OBJECT,
+      properties: {
+        action: {
+          type: Type.STRING,
+          description: "One of: write, explain, review, fix, optimize.",
+          enum: ["write", "explain", "review", "fix", "optimize"],
+        },
+        prompt: {
+          type: Type.STRING,
+          description: "For 'write': what to build. For the others: what the user wants done to the code.",
+        },
+        code: {
+          type: Type.STRING,
+          description: "The existing code, if any (required for explain/review/fix/optimize).",
+        },
+        language: {
+          type: Type.STRING,
+          description: "Programming language, if known (e.g. 'python', 'typescript').",
+        },
+      },
+      required: ["action", "prompt"],
+    },
+  },
+  {
     name: "open_link",
     description: "Open a URL in a new browser tab. Use when the user asks you to open, navigate to, or visit a website.",
     parameters: {
@@ -256,6 +284,35 @@ export async function executeTool(
         return { result: res.text ?? "No results." };
       } catch (e) {
         return { error: e instanceof Error ? e.message : "Search failed." };
+      }
+    }
+
+    case "code_helper": {
+      const action = String(args.action ?? "write");
+      const prompt = String(args.prompt ?? "").trim();
+      const code = String(args.code ?? "").trim();
+      const language = String(args.language ?? "").trim();
+      if (!prompt) return { error: "No instructions given." };
+      if (action !== "write" && !code) return { error: `Need the existing code to ${action}.` };
+
+      const instructionByAction: Record<string, string> = {
+        write: `Write code for this request: ${prompt}`,
+        explain: `Explain what this code does, plainly and concisely:\n\n${code}\n\nSpecifically: ${prompt}`,
+        review: `Review this code for bugs, style, and design issues:\n\n${code}\n\nFocus especially on: ${prompt}`,
+        fix: `Fix this code:\n\n${code}\n\nThe problem: ${prompt}`,
+        optimize: `Optimize this code for performance/readability without changing its behavior:\n\n${code}\n\nGoal: ${prompt}`,
+      };
+      const langHint = language ? ` (language: ${language})` : "";
+      const text = `${instructionByAction[action] ?? instructionByAction.write}${langHint}\n\nReply with the code plus a short explanation of what changed or why, suitable for reading aloud.`;
+
+      try {
+        const res = await ctx.genAI.models.generateContent({
+          model: TEXT_MODEL,
+          contents: [{ role: "user", parts: [{ text }] }],
+        });
+        return { result: res.text ?? "No response." };
+      } catch (e) {
+        return { error: e instanceof Error ? e.message : "Code helper failed." };
       }
     }
 

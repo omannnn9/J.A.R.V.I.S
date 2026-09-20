@@ -6,10 +6,14 @@ export function TopBar({
   assistantName,
   onOpenSettings,
   onOpenMemory,
+  asleep,
+  onToggleSleep,
 }: {
   assistantName: string;
   onOpenSettings: () => void;
   onOpenMemory: () => void;
+  asleep: boolean;
+  onToggleSleep: () => void;
 }) {
   const { time, date } = useClock();
 
@@ -37,6 +41,17 @@ export function TopBar({
           style={{ borderColor: "var(--border)" }}
         >
           🧠
+        </button>
+        <button
+          onClick={onToggleSleep}
+          title={asleep ? "Wake JARVIS" : "Put JARVIS to sleep"}
+          className="flex h-6 w-6 shrink-0 items-center justify-center rounded border text-[11px] transition-colors"
+          style={{
+            borderColor: asleep ? "var(--accent-border)" : "var(--border)",
+            color: asleep ? "var(--accent)" : "var(--muted)",
+          }}
+        >
+          {asleep ? "👂" : "😴"}
         </button>
       </div>
 
