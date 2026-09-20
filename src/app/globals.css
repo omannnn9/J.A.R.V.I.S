@@ -1,25 +1,31 @@
 @import "tailwindcss";
 
+/* Matches the desktop app's `class C` palette in ui.py exactly (BG, PRI,
+   TEXT, GREEN, RED, TMP-pink) — status colors (green/red/pink) are
+   deliberately NOT hue-linked, same as the source: they always mean the
+   same thing regardless of the accent retint. */
 :root {
-  --bg: #050809;
-  --bg-elevated: #081012;
+  --bg: #00060a;
+  --bg-elevated: #010d14;
   --surface: rgba(255, 255, 255, 0.03);
   --surface-strong: rgba(255, 255, 255, 0.06);
   --border: rgba(90, 220, 220, 0.16);
-  --text: #d8f3f3;
+  --text: #8ffcff;
   --muted: #4f7378;
-  --green: #22e08a;
-  --green-dim: rgba(34, 224, 138, 0.12);
-  --orange: #f5a623;
-  --pink: #ef6fa8;
-  --red: #f87171;
-  --red-dim: rgba(248, 113, 113, 0.12);
+  --green: #00ff88;
+  --green-dim: rgba(0, 255, 136, 0.12);
+  --orange: #ff6b00;
+  --pink: #ff6688;
+  --red: #ff3355;
+  --red-dim: rgba(255, 51, 85, 0.12);
 
-  /* Re-themeable accent — driven by the user's theme_hue setting (default: cyan) */
-  --accent-hue: 187;
-  --accent: hsl(var(--accent-hue) 82% 60%);
-  --accent-dim: hsl(var(--accent-hue) 82% 60% / 0.13);
-  --accent-border: hsl(var(--accent-hue) 82% 60% / 0.3);
+  /* Re-themeable accent — driven by the user's theme_hue setting.
+     Default hue 190 at 100%/50% lightness reproduces #00d4ff exactly, the
+     source's PRI (signature cyan) color. */
+  --accent-hue: 190;
+  --accent: hsl(var(--accent-hue) 100% 50%);
+  --accent-dim: hsl(var(--accent-hue) 100% 50% / 0.13);
+  --accent-border: hsl(var(--accent-hue) 100% 50% / 0.3);
 }
 
 @theme inline {

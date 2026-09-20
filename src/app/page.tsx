@@ -6,6 +6,8 @@ import { useAuth } from "@/lib/auth/AuthProvider";
 import { useChat } from "@/hooks/useChat";
 import { useProactive } from "@/hooks/useProactive";
 import { useReminderWatcher } from "@/hooks/useReminderWatcher";
+import { useTopicWatcher } from "@/hooks/useTopicWatcher";
+import { useWakeWord } from "@/hooks/useWakeWord";
 import { useToast } from "@/hooks/useToast";
 import type { AvatarState } from "@/lib/avatarState";
 import { TopBar } from "@/components/hud/TopBar";
@@ -73,6 +75,24 @@ export default function Home() {
     messages,
     busy: chatLoading || speaking || micOn,
     trigger: triggerProactive,
+  });
+
+  useTopicWatcher(user?.id ?? null, profile?.gemini_api_key ?? null, (topic, headline) => {
+    toast(`Update on "${topic}": ${headline}`);
+    if (!asleep) {
+      triggerProactive(
+        `[Internal — background monitor] The topic you're watching, "${topic}", has a new headline: "${headline}". Mention it to the user briefly and naturally.`
+      );
+    }
+  });
+
+  useWakeWord({
+    enabled: asleep && !!profile?.wake_word_enabled,
+    assistantName: profile?.assistant_name ?? "JARVIS",
+    onWake: () => {
+      setAsleep(false);
+      toast(`${profile?.assistant_name ?? "JARVIS"} is awake.`);
+    },
   });
 
   useEffect(() => {

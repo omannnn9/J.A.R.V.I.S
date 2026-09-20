@@ -3,6 +3,7 @@
 import { useState } from "react";
 import type { Profile } from "@/lib/supabase/types";
 import { useAudioDevices } from "@/hooks/useAudioDevices";
+import { useWakeWordSupport } from "@/hooks/useWakeWord";
 
 export function SettingsPanel({
   profile,
@@ -13,15 +14,16 @@ export function SettingsPanel({
 }) {
   const [assistantName, setAssistantName] = useState(profile.assistant_name);
   const [displayName, setDisplayName] = useState(profile.display_name);
-  const [voiceName, setVoiceName] = useState(profile.voice_name);
   const [hue, setHue] = useState(profile.theme_hue);
   const [apiKey, setApiKey] = useState(profile.gemini_api_key ?? "");
   const [showKey, setShowKey] = useState(false);
   const [micLabel, setMicLabel] = useState(profile.mic_device_label ?? "");
   const [speakerLabel, setSpeakerLabel] = useState(profile.speaker_device_label ?? "");
+  const [wakeWordEnabled, setWakeWordEnabled] = useState(profile.wake_word_enabled);
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
   const { inputs, outputs, supportsOutputSelection } = useAudioDevices();
+  const wakeWordSupported = useWakeWordSupport();
 
   async function handleSave() {
     setSaving(true);
@@ -29,11 +31,11 @@ export function SettingsPanel({
     await onSave({
       assistant_name: assistantName.trim() || "JARVIS",
       display_name: displayName.trim() || "Sir",
-      voice_name: voiceName.trim(),
       theme_hue: hue,
       gemini_api_key: apiKey.trim() || null,
       mic_device_label: micLabel || null,
       speaker_device_label: speakerLabel || null,
+      wake_word_enabled: wakeWordEnabled,
     });
     setSaving(false);
     setSaved(true);
@@ -59,20 +61,13 @@ export function SettingsPanel({
             value={hue}
             onChange={(e) => setHue(Number(e.target.value))}
             className="flex-1"
-            style={{ accentColor: `hsl(${hue} 82% 66%)` }}
+            style={{ accentColor: `hsl(${hue} 100% 50%)` }}
           />
           <span
             className="h-6 w-6 shrink-0 rounded-full border"
-            style={{ background: `hsl(${hue} 82% 66%)`, borderColor: "var(--border)" }}
+            style={{ background: `hsl(${hue} 100% 50%)`, borderColor: "var(--border)" }}
           />
         </div>
-      </Field>
-
-      <Field
-        label="Voice"
-        hint="A Gemini Live native voice name — e.g. Puck, Charon, Kore, Fenrir, Aoede. Takes effect on your next reconnect (reload the page)."
-      >
-        <TextInput value={voiceName} onChange={setVoiceName} placeholder="Puck" />
       </Field>
 
       <Field
@@ -131,6 +126,15 @@ export function SettingsPanel({
         </Field>
       )}
 
+      {wakeWordSupported && (
+        <Field
+          label="Wake word"
+          hint={`Say "${assistantName || "JARVIS"}" to wake it up while asleep. Uses your browser's built-in speech recognition (Chrome/Edge only) — audio is sent to your browser vendor's speech service while this is on.`}
+        >
+          <ToggleButton checked={wakeWordEnabled} onChange={setWakeWordEnabled} />
+        </Field>
+      )}
+
       <button
         onClick={handleSave}
         disabled={saving}
@@ -142,9 +146,26 @@ export function SettingsPanel({
 
       <p className="text-[11px] leading-relaxed text-[var(--muted)]">
         Running in a browser, JARVIS can&apos;t launch apps, change OS settings, or access files you
-        haven&apos;t explicitly shared — that&apos;s a browser security boundary, not a setting.
+        haven&apos;t explicitly shared — that&apos;s a browser security boundary, not a setting. Voice is fixed to
+        Charon.
       </p>
     </div>
+  );
+}
+
+function ToggleButton({ checked, onChange }: { checked: boolean; onChange: (v: boolean) => void }) {
+  return (
+    <button
+      onClick={() => onChange(!checked)}
+      className="rounded-lg border px-3 py-2 text-xs font-semibold tracking-wide transition-colors"
+      style={{
+        borderColor: checked ? "var(--accent-border)" : "var(--border)",
+        color: checked ? "var(--accent)" : "var(--muted)",
+        background: checked ? "var(--accent-dim)" : "transparent",
+      }}
+    >
+      {checked ? "ON" : "OFF"}
+    </button>
   );
 }
 

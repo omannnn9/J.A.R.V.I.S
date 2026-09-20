@@ -1,12 +1,13 @@
 "use client";
 
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { ImageAttachment } from "./useChat";
 
 async function grabFrame(stream: MediaStream): Promise<ImageAttachment> {
   const video = document.createElement("video");
   video.srcObject = stream;
   video.muted = true;
+  video.playsInline = true;
   await video.play();
   await new Promise((r) => setTimeout(r, 150)); // let a real frame land
 
@@ -22,19 +23,52 @@ async function grabFrame(stream: MediaStream): Promise<ImageAttachment> {
   return { mimeType: "image/jpeg", data: base64 };
 }
 
+// Never fail silently — a permission denial, a browser that doesn't support
+// getDisplayMedia (Safari on iOS, most notably), or a mid-capture error
+// should tell the user why, not just leave the button looking broken.
+function describeMediaError(e: unknown): string {
+  if (e instanceof DOMException) {
+    switch (e.name) {
+      case "NotAllowedError":
+        return "Permission denied — allow it in your browser's site settings and try again.";
+      case "NotFoundError":
+        return "No camera found on this device.";
+      case "NotReadableError":
+        return "Couldn't access it — another app may already be using it.";
+      case "AbortError":
+        return "Cancelled.";
+      default:
+        return e.message || `${e.name}.`;
+    }
+  }
+  return e instanceof Error ? e.message : "Something went wrong.";
+}
+
 export function useMedia() {
   const [screenSharing, setScreenSharing] = useState(false);
   const [camOn, setCamOn] = useState(false);
+  const [error, setError] = useState<string | null>(null);
   const screenStreamRef = useRef<MediaStream | null>(null);
   const camStreamRef = useRef<MediaStream | null>(null);
 
-  const supportsScreenShare =
-    typeof navigator !== "undefined" && !!navigator.mediaDevices?.getDisplayMedia;
-  const supportsCamera = typeof navigator !== "undefined" && !!navigator.mediaDevices?.getUserMedia;
+  // Starts false on both server and client (avoiding a hydration mismatch,
+  // same pattern as useClock/useAudioDevices), resolved for real once
+  // mounted.
+  const [supportsScreenShare, setSupportsScreenShare] = useState(false);
+  const [supportsCamera, setSupportsCamera] = useState(false);
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- one-time read of a browser-only API, not derived state
+    setSupportsScreenShare(!!navigator.mediaDevices?.getDisplayMedia);
+    setSupportsCamera(!!navigator.mediaDevices?.getUserMedia);
+  }, []);
 
   const startScreenShare = useCallback(async () => {
-    if (!supportsScreenShare) return false;
+    if (!supportsScreenShare) {
+      setError("Screen sharing isn't supported in this browser.");
+      return false;
+    }
     try {
+      setError(null);
       const stream = await navigator.mediaDevices.getDisplayMedia({ video: true });
       screenStreamRef.current = stream;
       stream.getVideoTracks()[0]?.addEventListener("ended", () => {
@@ -43,7 +77,8 @@ export function useMedia() {
       });
       setScreenSharing(true);
       return true;
-    } catch {
+    } catch (e) {
+      setError(describeMediaError(e));
       return false;
     }
   }, [supportsScreenShare]);
@@ -61,20 +96,27 @@ export function useMedia() {
     }
     try {
       const shot = await grabFrame(screenStreamRef.current);
+      setError(null);
       return { ...shot, label: "screen share" };
-    } catch {
+    } catch (e) {
+      setError(describeMediaError(e));
       return null;
     }
   }, [startScreenShare]);
 
   const startCamera = useCallback(async () => {
-    if (!supportsCamera) return false;
+    if (!supportsCamera) {
+      setError("Camera access isn't supported in this browser.");
+      return false;
+    }
     try {
+      setError(null);
       const stream = await navigator.mediaDevices.getUserMedia({ video: true });
       camStreamRef.current = stream;
       setCamOn(true);
       return true;
-    } catch {
+    } catch (e) {
+      setError(describeMediaError(e));
       return false;
     }
   }, [supportsCamera]);
@@ -92,8 +134,10 @@ export function useMedia() {
     }
     try {
       const shot = await grabFrame(camStreamRef.current);
+      setError(null);
       return { ...shot, label: "webcam" };
-    } catch {
+    } catch (e) {
+      setError(describeMediaError(e));
       return null;
     }
   }, [startCamera]);
@@ -103,6 +147,7 @@ export function useMedia() {
     supportsCamera,
     screenSharing,
     camOn,
+    error,
     startScreenShare,
     stopScreenShare,
     captureScreen,

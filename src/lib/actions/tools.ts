@@ -134,6 +134,34 @@ export const toolDeclarations: FunctionDeclaration[] = [
     },
   },
   {
+    name: "watch_topic",
+    description:
+      "Start monitoring a topic in the background and alert the user only when there's genuinely new news about it. Use when the user says things like 'keep an eye on X' or 'let me know if anything happens with Y'.",
+    parameters: {
+      type: Type.OBJECT,
+      properties: {
+        topic: { type: Type.STRING, description: "The topic to watch, e.g. 'SpaceX launches' or 'the local election'." },
+      },
+      required: ["topic"],
+    },
+  },
+  {
+    name: "list_watched_topics",
+    description: "List everything currently being monitored in the background.",
+    parameters: { type: Type.OBJECT, properties: {} },
+  },
+  {
+    name: "unwatch_topic",
+    description: "Stop monitoring a topic.",
+    parameters: {
+      type: Type.OBJECT,
+      properties: {
+        query: { type: Type.STRING, description: "Text to match against watched topics to find which one to stop." },
+      },
+      required: ["query"],
+    },
+  },
+  {
     name: "open_link",
     description: "Open a URL in a new browser tab. Use when the user asks you to open, navigate to, or visit a website.",
     parameters: {
@@ -178,6 +206,29 @@ const WEATHER_CODES: Record<number, string> = {
   95: "thunderstorm",
   96: "thunderstorm with hail",
 };
+
+// Matches actions/background_monitor.py's guardrail: no unattended
+// crypto/financial monitoring (a case for avoiding automated trading-signal
+// use, not a general news restriction).
+const WATCH_BLOCKLIST = [
+  "bitcoin",
+  "crypto",
+  "cryptocurrency",
+  "ethereum",
+  "altcoin",
+  "stock price",
+  "stock market",
+  "forex",
+  "trading signal",
+  "price prediction",
+  "nft price",
+  "token price",
+];
+
+function isBlockedWatchTopic(topic: string): boolean {
+  const t = topic.toLowerCase();
+  return WATCH_BLOCKLIST.some((kw) => t.includes(kw));
+}
 
 export async function executeTool(
   name: string,
@@ -314,6 +365,40 @@ export async function executeTool(
       } catch (e) {
         return { error: e instanceof Error ? e.message : "Code helper failed." };
       }
+    }
+
+    case "watch_topic": {
+      const topic = String(args.topic ?? "").trim();
+      if (!topic) return { error: "No topic given." };
+      if (isBlockedWatchTopic(topic)) {
+        return { error: "Can't set up background monitoring for crypto/financial topics." };
+      }
+      const { error } = await supabase.from("watch_topics").insert({ user_id: ctx.userId, topic });
+      if (error) return { error: error.message };
+      return { ok: true, watching: topic };
+    }
+
+    case "list_watched_topics": {
+      const { data } = await supabase
+        .from("watch_topics")
+        .select("topic, created_at")
+        .eq("user_id", ctx.userId)
+        .order("created_at", { ascending: false });
+      return { topics: data?.map((t) => t.topic) ?? [] };
+    }
+
+    case "unwatch_topic": {
+      const query = String(args.query ?? "").trim();
+      const { data } = await supabase
+        .from("watch_topics")
+        .select("id, topic")
+        .eq("user_id", ctx.userId)
+        .ilike("topic", `%${query}%`)
+        .limit(1);
+      const match = data?.[0];
+      if (!match) return { error: "No matching watched topic found." };
+      await supabase.from("watch_topics").delete().eq("id", match.id);
+      return { ok: true, stopped: match.topic };
     }
 
     case "open_youtube_search": {

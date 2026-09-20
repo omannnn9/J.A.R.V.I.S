@@ -82,10 +82,8 @@ export function FileUploadZone({ onFile }: { onFile: (file: ImageAttachment) => 
             <button
               onClick={async () => {
                 const shot = await media.captureScreen();
-                if (shot) {
-                  onFile({ ...shot, label: "screen share" });
-                  setLastFile("screen share");
-                }
+                if (shot) setLastFile("screen share");
+                if (shot) onFile(shot);
               }}
               className="flex-1 rounded-md border py-1.5 text-[10.5px] text-[var(--muted)] transition-colors hover:text-[var(--accent)]"
               style={{ borderColor: "var(--border)" }}
@@ -97,10 +95,8 @@ export function FileUploadZone({ onFile }: { onFile: (file: ImageAttachment) => 
             <button
               onClick={async () => {
                 const shot = await media.captureCamera();
-                if (shot) {
-                  onFile({ ...shot, label: "webcam" });
-                  setLastFile("webcam");
-                }
+                if (shot) setLastFile("webcam");
+                if (shot) onFile(shot);
               }}
               className="flex-1 rounded-md border py-1.5 text-[10.5px] text-[var(--muted)] transition-colors hover:text-[var(--accent)]"
               style={{ borderColor: "var(--border)" }}
@@ -109,6 +105,13 @@ export function FileUploadZone({ onFile }: { onFile: (file: ImageAttachment) => 
             </button>
           )}
         </div>
+      )}
+
+      {media.error && <p className="mt-1.5 text-[10.5px] text-[var(--red)]">{media.error}</p>}
+      {!media.supportsScreenShare && !media.supportsCamera && (
+        <p className="mt-1.5 text-[10.5px] text-[var(--muted)]">
+          Screen share and camera aren&apos;t available in this browser.
+        </p>
       )}
     </div>
   );

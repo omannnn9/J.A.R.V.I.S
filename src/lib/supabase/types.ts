@@ -12,6 +12,7 @@ export interface Profile {
   // when the saved device is no longer present.
   mic_device_label: string | null;
   speaker_device_label: string | null;
+  wake_word_enabled: boolean;
   onboarded: boolean;
   created_at: string;
   updated_at: string;
@@ -45,6 +46,8 @@ export interface WatchTopic {
   id: string;
   user_id: string;
   topic: string;
+  last_headline: string | null;
+  last_checked_at: string | null;
   created_at: string;
 }
 

@@ -334,7 +334,8 @@ export function useChat(profile: Profile | null, userId: string | null) {
 
       const config: LiveConnectConfig = {
         responseModalities: [Modality.AUDIO],
-        speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: p.voice_name || "Puck" } } },
+        // Voice is locked to Charon — not user-configurable.
+        speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: "Charon" } } },
         systemInstruction,
         tools: [{ functionDeclarations: toolDeclarations }],
         inputAudioTranscription: {},
