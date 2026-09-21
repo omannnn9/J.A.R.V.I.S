@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { useAuth } from "@/lib/auth/AuthProvider";
 import { useChat } from "@/hooks/useChat";
 import { useProactive } from "@/hooks/useProactive";
+import { useMorningBriefing } from "@/hooks/useMorningBriefing";
 import { useReminderWatcher } from "@/hooks/useReminderWatcher";
 import { useTopicWatcher } from "@/hooks/useTopicWatcher";
 import { useWakeWord } from "@/hooks/useWakeWord";
@@ -85,6 +86,14 @@ export default function Home() {
     enabled: historyLoaded && !!profile?.gemini_api_key && !asleep,
     messages,
     busy: chatLoading || speaking || micOn,
+    trigger: triggerProactive,
+  });
+
+  useMorningBriefing({
+    enabled: historyLoaded && !!profile?.gemini_api_key && !asleep && !chatLoading && !speaking && !micOn,
+    userId: user?.id ?? null,
+    assistantName: profile?.assistant_name ?? "JARVIS",
+    displayName: profile?.display_name ?? "Sir",
     trigger: triggerProactive,
   });
 

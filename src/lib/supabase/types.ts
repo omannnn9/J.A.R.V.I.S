@@ -14,6 +14,9 @@ export interface Profile {
   speaker_device_label: string | null;
   wake_word_enabled: boolean;
   onboarded: boolean;
+  // Local calendar date of the last proactive morning briefing, so it only
+  // ever fires once per day regardless of how many times the app reopens.
+  last_briefing_at: string | null;
   created_at: string;
   updated_at: string;
 }
