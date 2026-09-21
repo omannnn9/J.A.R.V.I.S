@@ -105,6 +105,9 @@ export function useChat(profile: Profile | null, userId: string | null) {
   // ever matters for the current tab, so there's nothing to persist.
   const [activeTimer, setActiveTimer] = useState<{ label: string; endAt: number } | null>(null);
   const timerTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // The most recent generated/uploaded image, for edit_image to work from.
+  // A ref, not state — it's read inside tool-call handling, never rendered.
+  const lastImageRef = useRef<{ mimeType: string; data: string } | null>(null);
   const [historyLoaded, setHistoryLoaded] = useState(false);
   const memoriesRef = useRef<string[]>([]);
 
@@ -334,6 +337,10 @@ export function useChat(profile: Profile | null, userId: string | null) {
             onUndoableDelete: showUndo,
             onSleepRequested: () => setSleepRequestId((n) => n + 1),
             onTimerStarted: startTimer,
+            getLastImage: () => lastImageRef.current,
+            setLastImage: (img) => {
+              lastImageRef.current = img;
+            },
           });
           if (call.name === "remember_fact" || call.name === "forget_fact") void loadMemories();
           return { id: call.id, name: call.name, response: { result } };
@@ -556,6 +563,11 @@ export function useChat(profile: Profile | null, userId: string | null) {
         const session = await connect();
         const parts: Part[] = [{ text }];
         for (const img of images ?? []) parts.push({ inlineData: { mimeType: img.mimeType, data: img.data } });
+        // Only a genuine image counts as something edit_image can work
+        // from — a PDF/text attachment shouldn't silently become the
+        // "last image" just because it went through the same upload zone.
+        const lastImage = [...(images ?? [])].reverse().find((img) => img.mimeType.startsWith("image/"));
+        if (lastImage) lastImageRef.current = { mimeType: lastImage.mimeType, data: lastImage.data };
         const turn: Content = { role: "user", parts };
         session.sendClientContent({ turns: [turn], turnComplete: true });
         return null; // reply arrives asynchronously via handleServerMessage/finalizeTurn

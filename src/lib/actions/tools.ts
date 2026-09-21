@@ -23,6 +23,11 @@ export interface ToolContext {
   // rather than persisted, since it only ever matters for the current tab
   // session (matches the desktop app's timer, which is likewise ephemeral).
   onTimerStarted?: (label: string, durationMs: number) => void;
+  // The most recently generated or uploaded image, so edit_image has
+  // something to work from without the model ever having to pass image
+  // bytes through its own text context (same reasoning as onGeneratedImage).
+  getLastImage?: () => { mimeType: string; data: string } | null;
+  setLastImage?: (image: { mimeType: string; data: string }) => void;
 }
 
 export const toolDeclarations: FunctionDeclaration[] = [
@@ -173,6 +178,18 @@ export const toolDeclarations: FunctionDeclaration[] = [
         prompt: { type: Type.STRING, description: "A detailed description of the image to generate." },
       },
       required: ["prompt"],
+    },
+  },
+  {
+    name: "edit_image",
+    description:
+      "Edit the most recently generated or uploaded image based on an instruction — e.g. 'make the sky purple' or 'add a hat'. Use whenever the user asks to change, edit, modify, or redo an image that's already in the conversation, rather than describing a brand new one.",
+    parameters: {
+      type: Type.OBJECT,
+      properties: {
+        instruction: { type: Type.STRING, description: "What to change about the image." },
+      },
+      required: ["instruction"],
     },
   },
   {
@@ -672,9 +689,43 @@ export async function executeTool(
         const dataUrl = `data:${mimeType};base64,${base64}`;
         const persistedUrl = await uploadGeneratedImage(ctx.userId, base64, mimeType);
         ctx.onGeneratedImage?.(persistedUrl ?? dataUrl, prompt);
+        ctx.setLastImage?.({ mimeType, data: base64 });
         return { ok: true, shown_to_user: true };
       } catch (e) {
         return { error: e instanceof Error ? e.message : "Image generation failed." };
+      }
+    }
+
+    case "edit_image": {
+      const instruction = String(args.instruction ?? "").trim();
+      if (!instruction) return { error: "No editing instruction given." };
+      const source = ctx.getLastImage?.();
+      if (!source) return { error: "No image to edit yet — generate or upload one first." };
+      try {
+        const res = await ctx.genAI.models.generateContent({
+          model: IMAGE_MODEL,
+          contents: [
+            {
+              role: "user",
+              parts: [{ inlineData: { mimeType: source.mimeType, data: source.data } }, { text: instruction }],
+            },
+          ],
+          config: { responseModalities: ["IMAGE"] },
+        });
+        const imgPart = res.candidates?.[0]?.content?.parts?.find((p) => p.inlineData?.data);
+        if (!imgPart?.inlineData?.data) {
+          const blockReason = res.promptFeedback?.blockReason;
+          return { error: blockReason ? `Blocked: ${blockReason}` : "No edited image came back." };
+        }
+        const mimeType = imgPart.inlineData.mimeType ?? "image/png";
+        const base64 = imgPart.inlineData.data;
+        const dataUrl = `data:${mimeType};base64,${base64}`;
+        const persistedUrl = await uploadGeneratedImage(ctx.userId, base64, mimeType);
+        ctx.onGeneratedImage?.(persistedUrl ?? dataUrl, `Edited: ${instruction}`);
+        ctx.setLastImage?.({ mimeType, data: base64 });
+        return { ok: true, shown_to_user: true };
+      } catch (e) {
+        return { error: e instanceof Error ? e.message : "Image editing failed." };
       }
     }
 
