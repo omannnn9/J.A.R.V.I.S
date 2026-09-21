@@ -36,6 +36,31 @@ export interface ImageAttachment {
 
 const OUTPUT_SAMPLE_RATE = 24000;
 
+function dataUrlToBlob(dataUrl: string): Blob {
+  const [meta, base64] = dataUrl.split(",");
+  const mime = meta.match(/data:(.*);base64/)?.[1] ?? "image/png";
+  const binary = atob(base64);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+  return new Blob([bytes], { type: mime });
+}
+
+// Opens a freshly generated image in its own tab. Goes through a blob: URL
+// rather than the raw data: URL — some browsers refuse to navigate a new
+// window straight to a data: URL. This fires from an async tool-call
+// callback rather than a direct click, so popup blockers can still swallow
+// it silently; the inline image plus its own "open"/"download" links (see
+// ActivityLog) are the guaranteed fallback either way.
+function openImageInNewTab(dataUrl: string) {
+  try {
+    const blobUrl = URL.createObjectURL(dataUrlToBlob(dataUrl));
+    const tab = window.open(blobUrl, "_blank", "noopener,noreferrer");
+    if (!tab) URL.revokeObjectURL(blobUrl);
+  } catch {
+    // Inline image + manual buttons still work even if this fails.
+  }
+}
+
 function buildSystemInstruction(profile: Profile, memories: string[]): string {
   const lines = [
     `You are ${profile.assistant_name}, an advanced, capable personal AI assistant running inside a website, speaking with ${profile.display_name}.`,
@@ -263,7 +288,10 @@ export function useChat(profile: Profile | null, userId: string | null) {
           const result = await executeTool(call.name ?? "", call.args ?? {}, {
             userId: userIdRef.current!,
             genAI,
-            onGeneratedImage: (dataUrl, prompt) => appendMessage("assistant", `Generated image: ${prompt}`, dataUrl),
+            onGeneratedImage: (dataUrl, prompt) => {
+              appendMessage("assistant", `Generated image: ${prompt}`, dataUrl);
+              openImageInNewTab(dataUrl);
+            },
             onUndoableDelete: showUndo,
             onSleepRequested: () => setSleepRequestId((n) => n + 1),
           });

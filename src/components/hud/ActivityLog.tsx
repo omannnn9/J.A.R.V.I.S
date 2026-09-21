@@ -85,13 +85,32 @@ export function ActivityLog({
               </span>
             )}
             {m.imageDataUrl && (
-              // eslint-disable-next-line @next/next/no-img-element -- ephemeral data: URL, not a static asset
-              <img
-                src={m.imageDataUrl}
-                alt={m.text}
-                className="mt-1.5 max-w-full rounded-md border"
-                style={{ borderColor: "var(--border)" }}
-              />
+              <div className="mt-1.5">
+                {/* eslint-disable-next-line @next/next/no-img-element -- ephemeral data: URL, not a static asset */}
+                <img
+                  src={m.imageDataUrl}
+                  alt={m.text}
+                  className="max-w-full rounded-md border"
+                  style={{ borderColor: "var(--border)" }}
+                />
+                <div className="mt-1 flex gap-3">
+                  <a
+                    href={m.imageDataUrl}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="text-[10.5px] font-semibold text-[var(--accent)] hover:opacity-80"
+                  >
+                    OPEN IN NEW TAB
+                  </a>
+                  <a
+                    href={m.imageDataUrl}
+                    download={`jarvis-${m.id}.png`}
+                    className="text-[10.5px] font-semibold text-[var(--accent)] hover:opacity-80"
+                  >
+                    DOWNLOAD
+                  </a>
+                </div>
+              </div>
             )}
           </div>
         );
