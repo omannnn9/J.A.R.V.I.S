@@ -346,7 +346,7 @@ export default function Home() {
         />
       </Panel>
 
-      <Panel title="Memory" open={memoryOpen} onClose={() => setMemoryOpen(false)}>
+      <Panel title="Memory & Alerts" open={memoryOpen} onClose={() => setMemoryOpen(false)}>
         <MemoryPanel userId={user!.id} open={memoryOpen} onChanged={reloadMemories} />
       </Panel>
     </div>

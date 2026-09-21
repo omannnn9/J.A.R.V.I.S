@@ -40,7 +40,7 @@ export function TopBar({
         </button>
         <button
           onClick={onOpenMemory}
-          title="Memory"
+          title="Memory, reminders & watched topics"
           className="flex h-8 w-8 shrink-0 items-center justify-center rounded border text-[14px] text-[var(--muted)] transition-colors hover:text-[var(--accent)] sm:h-6 sm:w-6 sm:text-[11px]"
           style={{ borderColor: "var(--border)" }}
         >

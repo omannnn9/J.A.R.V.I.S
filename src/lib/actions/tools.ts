@@ -257,7 +257,7 @@ const WATCH_BLOCKLIST = [
   "token price",
 ];
 
-function isBlockedWatchTopic(topic: string): boolean {
+export function isBlockedWatchTopic(topic: string): boolean {
   const t = topic.toLowerCase();
   return WATCH_BLOCKLIST.some((kw) => t.includes(kw));
 }
