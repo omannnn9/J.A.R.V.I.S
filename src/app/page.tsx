@@ -23,6 +23,7 @@ import { SettingsPanel } from "@/components/hud/SettingsPanel";
 import { MemoryPanel } from "@/components/hud/MemoryPanel";
 import { Toast } from "@/components/hud/Toast";
 import { UndoToast } from "@/components/hud/UndoToast";
+import { TimerBadge } from "@/components/hud/TimerBadge";
 import type { ImageAttachment } from "@/hooks/useChat";
 
 export default function Home() {
@@ -46,6 +47,8 @@ export default function Home() {
     confirmUndo,
     dismissUndo,
     sleepRequestId,
+    activeTimer,
+    dismissTimer,
     historyLoaded,
     reloadMemories,
   } = useChat(profile, user?.id ?? null);
@@ -234,6 +237,7 @@ export default function Home() {
     >
       <Toast message={toastMessage} />
       <UndoToast pending={pendingUndo} onUndo={() => void confirmUndo()} onDismiss={dismissUndo} />
+      <TimerBadge timer={activeTimer} onDismiss={dismissTimer} />
 
       <TopBar
         assistantName={profile.assistant_name}

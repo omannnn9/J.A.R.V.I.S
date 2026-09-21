@@ -19,6 +19,10 @@ export interface ToolContext {
   // is the only way the model can actually act on that request instead of
   // just talking as if it had.
   onSleepRequested?: () => void;
+  // A running countdown, distinct from a reminder: shown live in the HUD
+  // rather than persisted, since it only ever matters for the current tab
+  // session (matches the desktop app's timer, which is likewise ephemeral).
+  onTimerStarted?: (label: string, durationMs: number) => void;
 }
 
 export const toolDeclarations: FunctionDeclaration[] = [
@@ -75,6 +79,12 @@ export const toolDeclarations: FunctionDeclaration[] = [
         minutes_from_now: {
           type: Type.NUMBER,
           description: "How many minutes from now to fire the reminder.",
+        },
+        recurrence: {
+          type: Type.STRING,
+          description:
+            "How often this reminder repeats after it first fires. 'none' (default) for a one-off reminder, 'daily' or 'weekly' for a recurring one at the same time of day.",
+          enum: ["none", "daily", "weekly"],
         },
       },
       required: ["text", "minutes_from_now"],
@@ -204,6 +214,58 @@ export const toolDeclarations: FunctionDeclaration[] = [
       required: ["url"],
     },
   },
+  {
+    name: "calculate",
+    description: "Evaluate a math expression and return the exact result. Use for arithmetic the user asks you to compute — sums, percentages, splits, etc. — rather than doing it in your head.",
+    parameters: {
+      type: Type.OBJECT,
+      properties: {
+        expression: {
+          type: Type.STRING,
+          description: "A math expression using +, -, *, /, %, ^, and parentheses, e.g. '(120 + 35) * 1.08'.",
+        },
+      },
+      required: ["expression"],
+    },
+  },
+  {
+    name: "convert_units",
+    description: "Convert a value between units of length, mass, volume, or temperature. Use for questions like 'how many km is 5 miles' or 'convert 350°F to Celsius'.",
+    parameters: {
+      type: Type.OBJECT,
+      properties: {
+        value: { type: Type.NUMBER, description: "The numeric value to convert." },
+        from_unit: { type: Type.STRING, description: "Unit to convert from, e.g. 'miles', 'kg', 'fahrenheit'." },
+        to_unit: { type: Type.STRING, description: "Unit to convert to, e.g. 'km', 'lb', 'celsius'." },
+      },
+      required: ["value", "from_unit", "to_unit"],
+    },
+  },
+  {
+    name: "convert_currency",
+    description: "Convert an amount from one currency to another using live exchange rates. Use for questions like 'how much is 100 dollars in euros'.",
+    parameters: {
+      type: Type.OBJECT,
+      properties: {
+        amount: { type: Type.NUMBER, description: "The amount to convert." },
+        from_currency: { type: Type.STRING, description: "3-letter currency code to convert from, e.g. 'USD'." },
+        to_currency: { type: Type.STRING, description: "3-letter currency code to convert to, e.g. 'EUR'." },
+      },
+      required: ["amount", "from_currency", "to_currency"],
+    },
+  },
+  {
+    name: "start_timer",
+    description: "Start a live countdown timer for a set duration and alert the user when it's up. Use for things like 'set a timer for 10 minutes' — a visible, running countdown, distinct from set_reminder which is for a specific future time and doesn't need the tab open the whole time.",
+    parameters: {
+      type: Type.OBJECT,
+      properties: {
+        label: { type: Type.STRING, description: "What the timer is for, e.g. 'pasta' or 'break'." },
+        minutes: { type: Type.NUMBER, description: "How many minutes the timer should run for." },
+      },
+      required: ["minutes"],
+    },
+  },
 ];
 
 async function geocodeCity(city: string) {
@@ -257,9 +319,178 @@ const WATCH_BLOCKLIST = [
   "token price",
 ];
 
+// Generated images are uploaded to a public Storage bucket keyed by the
+// user's own folder (matches the storage.objects RLS policy) so they
+// survive a reload instead of living only as an in-memory data: URL for the
+// current session. A failed upload isn't fatal — the caller falls back to
+// the raw data: URL, same as before this existed, just not persisted.
+async function uploadGeneratedImage(userId: string, base64: string, mimeType: string): Promise<string | null> {
+  try {
+    const supabase = getSupabaseBrowserClient();
+    const ext = mimeType === "image/jpeg" ? "jpg" : "png";
+    const path = `${userId}/${crypto.randomUUID()}.${ext}`;
+    const bytes = Uint8Array.from(atob(base64), (c) => c.charCodeAt(0));
+    const { error } = await supabase.storage.from("generated-images").upload(path, bytes, { contentType: mimeType });
+    if (error) return null;
+    return supabase.storage.from("generated-images").getPublicUrl(path).data.publicUrl;
+  } catch {
+    return null;
+  }
+}
+
 export function isBlockedWatchTopic(topic: string): boolean {
   const t = topic.toLowerCase();
   return WATCH_BLOCKLIST.some((kw) => t.includes(kw));
+}
+
+// A small recursive-descent parser rather than eval()/Function() — this
+// runs on whatever expression the model decides to pass through, and
+// eval'ing arbitrary strings is a real code-injection surface even when
+// the "user" driving it is a trusted first party.
+function evaluateExpression(expr: string): number {
+  const tokens = expr.match(/\d+\.?\d*|\.\d+|[+\-*/%^()]/g);
+  if (!tokens || !tokens.length) throw new Error("Not a valid math expression.");
+  let pos = 0;
+  const peek = () => tokens[pos];
+  const consume = () => tokens[pos++];
+
+  function parseExpr(): number {
+    let value = parseTerm();
+    while (peek() === "+" || peek() === "-") value = consume() === "+" ? value + parseTerm() : value - parseTerm();
+    return value;
+  }
+  function parseTerm(): number {
+    let value = parseUnary();
+    while (peek() === "*" || peek() === "/" || peek() === "%") {
+      const op = consume();
+      const rhs = parseUnary();
+      value = op === "*" ? value * rhs : op === "/" ? value / rhs : value % rhs;
+    }
+    return value;
+  }
+  function parseUnary(): number {
+    if (peek() === "-") {
+      consume();
+      return -parsePower();
+    }
+    if (peek() === "+") consume();
+    return parsePower();
+  }
+  function parsePower(): number {
+    const base = parseAtom();
+    if (peek() === "^") {
+      consume();
+      return Math.pow(base, parseUnary());
+    }
+    return base;
+  }
+  function parseAtom(): number {
+    if (peek() === "(") {
+      consume();
+      const value = parseExpr();
+      if (peek() !== ")") throw new Error("Mismatched parentheses.");
+      consume();
+      return value;
+    }
+    const tok = consume();
+    const num = tok === undefined ? NaN : Number(tok);
+    if (Number.isNaN(num)) throw new Error("Invalid expression.");
+    return num;
+  }
+
+  const result = parseExpr();
+  if (pos !== tokens.length) throw new Error("Invalid expression.");
+  return result;
+}
+
+const UNIT_GROUPS: Record<string, Record<string, number>> = {
+  length: {
+    m: 1,
+    meter: 1,
+    meters: 1,
+    km: 1000,
+    kilometer: 1000,
+    kilometers: 1000,
+    cm: 0.01,
+    centimeter: 0.01,
+    centimeters: 0.01,
+    mm: 0.001,
+    millimeter: 0.001,
+    millimeters: 0.001,
+    mi: 1609.344,
+    mile: 1609.344,
+    miles: 1609.344,
+    yd: 0.9144,
+    yard: 0.9144,
+    yards: 0.9144,
+    ft: 0.3048,
+    foot: 0.3048,
+    feet: 0.3048,
+    in: 0.0254,
+    inch: 0.0254,
+    inches: 0.0254,
+  },
+  mass: {
+    kg: 1,
+    kilogram: 1,
+    kilograms: 1,
+    g: 0.001,
+    gram: 0.001,
+    grams: 0.001,
+    lb: 0.45359237,
+    lbs: 0.45359237,
+    pound: 0.45359237,
+    pounds: 0.45359237,
+    oz: 0.028349523125,
+    ounce: 0.028349523125,
+    ounces: 0.028349523125,
+  },
+  volume: {
+    l: 1,
+    liter: 1,
+    liters: 1,
+    litre: 1,
+    litres: 1,
+    ml: 0.001,
+    milliliter: 0.001,
+    milliliters: 0.001,
+    gal: 3.785411784,
+    gallon: 3.785411784,
+    gallons: 3.785411784,
+    cup: 0.2365882365,
+    cups: 0.2365882365,
+    floz: 0.0295735295625,
+  },
+};
+
+const TEMPERATURE_ALIASES: Record<string, "celsius" | "fahrenheit" | "kelvin"> = {
+  c: "celsius",
+  celsius: "celsius",
+  f: "fahrenheit",
+  fahrenheit: "fahrenheit",
+  k: "kelvin",
+  kelvin: "kelvin",
+};
+
+function convertTemperature(value: number, from: string, to: string): number | null {
+  const f = TEMPERATURE_ALIASES[from];
+  const t = TEMPERATURE_ALIASES[to];
+  if (!f || !t) return null;
+  const celsius = f === "celsius" ? value : f === "fahrenheit" ? ((value - 32) * 5) / 9 : value - 273.15;
+  if (t === "celsius") return celsius;
+  if (t === "fahrenheit") return (celsius * 9) / 5 + 32;
+  return celsius + 273.15;
+}
+
+function convertUnits(value: number, fromUnit: string, toUnit: string): number {
+  const from = fromUnit.trim().toLowerCase().replace(/[°.]/g, "");
+  const to = toUnit.trim().toLowerCase().replace(/[°.]/g, "");
+  const tempResult = convertTemperature(value, from, to);
+  if (tempResult !== null) return tempResult;
+  for (const group of Object.values(UNIT_GROUPS)) {
+    if (from in group && to in group) return (value * group[from]) / group[to];
+  }
+  throw new Error(`Don't know how to convert between "${fromUnit}" and "${toUnit}".`);
 }
 
 export async function executeTool(
@@ -330,10 +561,14 @@ export async function executeTool(
       const text = String(args.text ?? "").trim();
       const minutes = Number(args.minutes_from_now ?? 0);
       if (!text || !minutes || minutes <= 0) return { error: "Need reminder text and a positive number of minutes." };
+      const recurrenceArg = String(args.recurrence ?? "none");
+      const recurrence = recurrenceArg === "daily" || recurrenceArg === "weekly" ? recurrenceArg : "none";
       const remindAt = new Date(Date.now() + minutes * 60_000).toISOString();
-      const { error } = await supabase.from("reminders").insert({ user_id: ctx.userId, text, remind_at: remindAt });
+      const { error } = await supabase
+        .from("reminders")
+        .insert({ user_id: ctx.userId, text, remind_at: remindAt, recurrence });
       if (error) return { error: error.message };
-      return { ok: true, text, remind_at: remindAt };
+      return { ok: true, text, remind_at: remindAt, recurrence };
     }
 
     case "list_reminders": {
@@ -432,8 +667,11 @@ export async function executeTool(
           const blockReason = res.promptFeedback?.blockReason;
           return { error: blockReason ? `Blocked: ${blockReason}` : "No image came back." };
         }
-        const dataUrl = `data:${imgPart.inlineData.mimeType ?? "image/png"};base64,${imgPart.inlineData.data}`;
-        ctx.onGeneratedImage?.(dataUrl, prompt);
+        const mimeType = imgPart.inlineData.mimeType ?? "image/png";
+        const base64 = imgPart.inlineData.data;
+        const dataUrl = `data:${mimeType};base64,${base64}`;
+        const persistedUrl = await uploadGeneratedImage(ctx.userId, base64, mimeType);
+        ctx.onGeneratedImage?.(persistedUrl ?? dataUrl, prompt);
         return { ok: true, shown_to_user: true };
       } catch (e) {
         return { error: e instanceof Error ? e.message : "Image generation failed." };
@@ -486,6 +724,59 @@ export async function executeTool(
       if (!/^https?:\/\//i.test(url)) url = `https://${url}`;
       if (typeof window !== "undefined") window.open(url, "_blank", "noopener,noreferrer");
       return { ok: true, opened: url };
+    }
+
+    case "calculate": {
+      const expression = String(args.expression ?? "");
+      try {
+        const result = evaluateExpression(expression);
+        if (!Number.isFinite(result)) return { error: "That expression doesn't evaluate to a finite number." };
+        return { result };
+      } catch (e) {
+        return { error: e instanceof Error ? e.message : "Couldn't evaluate that expression." };
+      }
+    }
+
+    case "convert_units": {
+      const value = Number(args.value ?? NaN);
+      const fromUnit = String(args.from_unit ?? "");
+      const toUnit = String(args.to_unit ?? "");
+      if (!Number.isFinite(value) || !fromUnit || !toUnit) {
+        return { error: "Need a value, a from_unit, and a to_unit." };
+      }
+      try {
+        const result = convertUnits(value, fromUnit, toUnit);
+        return { result, from: `${value} ${fromUnit}`, to: `${result} ${toUnit}` };
+      } catch (e) {
+        return { error: e instanceof Error ? e.message : "Couldn't convert that." };
+      }
+    }
+
+    case "convert_currency": {
+      const amount = Number(args.amount ?? NaN);
+      const from = String(args.from_currency ?? "").trim().toUpperCase();
+      const to = String(args.to_currency ?? "").trim().toUpperCase();
+      if (!Number.isFinite(amount) || !from || !to) {
+        return { error: "Need an amount, a from_currency, and a to_currency." };
+      }
+      try {
+        const res = await fetch(`https://api.frankfurter.app/latest?amount=${amount}&from=${from}&to=${to}`);
+        if (!res.ok) return { error: "Currency conversion service unavailable." };
+        const data = await res.json();
+        const converted = data.rates?.[to];
+        if (converted === undefined) return { error: `Don't recognize "${to}" as a currency code.` };
+        return { result: converted, from: `${amount} ${from}`, to: `${converted} ${to}`, date: data.date };
+      } catch {
+        return { error: "Couldn't reach the currency conversion service." };
+      }
+    }
+
+    case "start_timer": {
+      const minutes = Number(args.minutes ?? 0);
+      if (!minutes || minutes <= 0) return { error: "Need a positive number of minutes." };
+      const label = String(args.label ?? "Timer").trim() || "Timer";
+      ctx.onTimerStarted?.(label, minutes * 60_000);
+      return { ok: true, label, minutes };
     }
 
     default:

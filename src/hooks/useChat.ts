@@ -51,9 +51,15 @@ function dataUrlToBlob(dataUrl: string): Blob {
 // callback rather than a direct click, so popup blockers can still swallow
 // it silently; the inline image plus its own "open"/"download" links (see
 // ActivityLog) are the guaranteed fallback either way.
-function openImageInNewTab(dataUrl: string) {
+function openImageInNewTab(url: string) {
   try {
-    const blobUrl = URL.createObjectURL(dataUrlToBlob(dataUrl));
+    // A persisted Storage URL navigates directly; only a raw data: URL (the
+    // upload-failed fallback) needs the blob: URL workaround.
+    if (!url.startsWith("data:")) {
+      window.open(url, "_blank", "noopener,noreferrer");
+      return;
+    }
+    const blobUrl = URL.createObjectURL(dataUrlToBlob(url));
     const tab = window.open(blobUrl, "_blank", "noopener,noreferrer");
     if (!tab) URL.revokeObjectURL(blobUrl);
   } catch {
@@ -66,7 +72,7 @@ function buildSystemInstruction(profile: Profile, memories: string[]): string {
     `You are ${profile.assistant_name}, an advanced, capable personal AI assistant running inside a website, speaking with ${profile.display_name}.`,
     `You are warm, sharp, a little witty, and extremely competent — inspired by the classic "JARVIS" archetype: calm, proactive, precise.`,
     `You are running in a web browser, not on the user's operating system. You cannot launch native apps, control the OS, change system settings, or access files outside what the user explicitly shares with you (uploads, screen share, webcam, clipboard). If asked to do something like that, say plainly that it's outside what a website is allowed to do in a browser, and offer the closest thing you can actually do instead.`,
-    `You have tools for: weather, remembering/recalling/forgetting facts about the user, setting/listing/cancelling reminders, searching the live web, opening YouTube searches, opening links, writing/explaining/reviewing/fixing code, generating images, watching a topic for news and stopping watching it, and going to sleep. Use them proactively whenever relevant — don't ask permission for read-only actions like checking weather or searching.`,
+    `You have tools for: weather, remembering/recalling/forgetting facts about the user, setting/listing/cancelling reminders (one-off or recurring daily/weekly), starting a countdown timer, searching the live web, opening YouTube searches, opening links, writing/explaining/reviewing/fixing code, generating and editing images, converting between units or currencies, doing exact math, watching a topic for news and stopping watching it, and going to sleep. Use them proactively whenever relevant — don't ask permission for read-only actions like checking weather, searching, or doing a calculation.`,
     `If the user asks you to go to sleep, be quiet, stop listening, or hush — call the go_to_sleep tool immediately. Don't just say you will and keep talking or keep the mic open; actually call it. This is the one instruction that overrides "keep replies natural," because leaving the mic open after being asked to stop is a real problem, not a conversational nicety.`,
     `Keep replies concise and natural — you're speaking them aloud, not writing an essay.`,
   ];
@@ -95,6 +101,10 @@ export function useChat(profile: Profile | null, userId: string | null) {
   // sleep again" apart from "still asleep from before" even if it never
   // toggles false in between.
   const [sleepRequestId, setSleepRequestId] = useState(0);
+  // A running countdown, kept in memory only — unlike a reminder it only
+  // ever matters for the current tab, so there's nothing to persist.
+  const [activeTimer, setActiveTimer] = useState<{ label: string; endAt: number } | null>(null);
+  const timerTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [historyLoaded, setHistoryLoaded] = useState(false);
   const memoriesRef = useRef<string[]>([]);
 
@@ -153,7 +163,7 @@ export function useChat(profile: Profile | null, userId: string | null) {
       await loadMemories();
       const { data } = await supabase
         .from("messages")
-        .select("id, role, content, created_at")
+        .select("id, role, content, image_url, created_at")
         .eq("user_id", userId)
         .order("created_at", { ascending: true })
         .limit(200);
@@ -164,6 +174,7 @@ export function useChat(profile: Profile | null, userId: string | null) {
             role: m.role,
             text: m.content,
             ts: new Date(m.created_at).getTime(),
+            imageDataUrl: m.image_url ?? undefined,
           }))
         );
       }
@@ -173,9 +184,17 @@ export function useChat(profile: Profile | null, userId: string | null) {
   }, [userId]);
 
   const persist = useCallback(
-    async (role: ChatMessage["role"], text: string) => {
+    async (role: ChatMessage["role"], text: string, imageUrl?: string) => {
       if (!userIdRef.current) return;
-      await supabase.from("messages").insert({ user_id: userIdRef.current, role, content: text });
+      // A raw data: URL never gets written to the image_url column — it's
+      // only there because the Storage upload failed, and a base64 data:
+      // URL is far too large for a text column anyway. Persisting it as
+      // null just means the image won't survive a reload, same as before
+      // Storage persistence existed.
+      const persistableUrl = imageUrl && !imageUrl.startsWith("data:") ? imageUrl : null;
+      await supabase
+        .from("messages")
+        .insert({ user_id: userIdRef.current, role, content: text, image_url: persistableUrl });
     },
     [supabase]
   );
@@ -184,7 +203,7 @@ export function useChat(profile: Profile | null, userId: string | null) {
     (role: ChatMessage["role"], text: string, imageDataUrl?: string) => {
       const msg: ChatMessage = { id: crypto.randomUUID(), role, text, ts: Date.now(), imageDataUrl };
       setMessages((prev) => [...prev, msg]);
-      void persist(role, text);
+      void persist(role, text, imageDataUrl);
     },
     [persist]
   );
@@ -278,6 +297,26 @@ export function useChat(profile: Profile | null, userId: string | null) {
     setPendingUndo(null);
   }, []);
 
+  const startTimer = useCallback(
+    (label: string, durationMs: number) => {
+      if (timerTimeoutRef.current) clearTimeout(timerTimeoutRef.current);
+      setActiveTimer({ label, endAt: Date.now() + durationMs });
+      timerTimeoutRef.current = setTimeout(() => {
+        setActiveTimer(null);
+        appendMessage("system", `⏰ Timer done: ${label}`);
+        if (typeof window !== "undefined" && "Notification" in window && Notification.permission === "granted") {
+          new Notification("JARVIS timer", { body: label });
+        }
+      }, durationMs);
+    },
+    [appendMessage]
+  );
+
+  const dismissTimer = useCallback(() => {
+    if (timerTimeoutRef.current) clearTimeout(timerTimeoutRef.current);
+    setActiveTimer(null);
+  }, []);
+
   const handleToolCalls = useCallback(
     async (calls: { id?: string; name?: string; args?: Record<string, unknown> }[]) => {
       const session = sessionRef.current;
@@ -294,6 +333,7 @@ export function useChat(profile: Profile | null, userId: string | null) {
             },
             onUndoableDelete: showUndo,
             onSleepRequested: () => setSleepRequestId((n) => n + 1),
+            onTimerStarted: startTimer,
           });
           if (call.name === "remember_fact" || call.name === "forget_fact") void loadMemories();
           return { id: call.id, name: call.name, response: { result } };
@@ -301,7 +341,7 @@ export function useChat(profile: Profile | null, userId: string | null) {
       );
       session.sendToolResponse({ functionResponses: responses });
     },
-    [loadMemories, appendMessage, showUndo]
+    [loadMemories, appendMessage, showUndo, startTimer]
   );
 
   const finalizeTurn = useCallback(() => {
@@ -621,6 +661,7 @@ export function useChat(profile: Profile | null, userId: string | null) {
       if (micCtxRef.current) void micCtxRef.current.close();
       if (playbackCtxRef.current) void playbackCtxRef.current.close();
       if (undoTimerRef.current) clearTimeout(undoTimerRef.current);
+      if (timerTimeoutRef.current) clearTimeout(timerTimeoutRef.current);
     };
   }, []);
 
@@ -644,6 +685,8 @@ export function useChat(profile: Profile | null, userId: string | null) {
     confirmUndo,
     dismissUndo,
     sleepRequestId,
+    activeTimer,
+    dismissTimer,
     historyLoaded,
     reloadMemories: loadMemories,
   };

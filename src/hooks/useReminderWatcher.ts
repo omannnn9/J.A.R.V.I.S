@@ -19,7 +19,7 @@ export function useReminderWatcher(userId: string | null, onDue: (text: string) 
     const check = async () => {
       const { data } = await supabase
         .from("reminders")
-        .select("id, text")
+        .select("id, text, remind_at, recurrence")
         .eq("user_id", userId)
         .eq("notified", false)
         .lte("remind_at", new Date().toISOString());
@@ -29,7 +29,23 @@ export function useReminderWatcher(userId: string | null, onDue: (text: string) 
         if (typeof window !== "undefined" && "Notification" in window && Notification.permission === "granted") {
           new Notification("JARVIS reminder", { body: r.text });
         }
-        await supabase.from("reminders").update({ notified: true }).eq("id", r.id);
+        if (r.recurrence === "none") {
+          await supabase.from("reminders").update({ notified: true }).eq("id", r.id);
+        } else {
+          // Recurring: roll remind_at forward from its own last fire time
+          // (not "now") so a reminder set for 9am daily keeps firing at
+          // 9am even if this tab was closed when it was actually due —
+          // it catches up to the next occurrence still ahead of now,
+          // rather than drifting to whatever time the tab happened to
+          // reopen.
+          const stepMs = r.recurrence === "daily" ? 24 * 60 * 60_000 : 7 * 24 * 60 * 60_000;
+          let next = new Date(r.remind_at).getTime();
+          const now = Date.now();
+          do {
+            next += stepMs;
+          } while (next <= now);
+          await supabase.from("reminders").update({ remind_at: new Date(next).toISOString() }).eq("id", r.id);
+        }
       }
     };
 

@@ -31,6 +31,7 @@ export interface Reminder {
   text: string;
   remind_at: string;
   notified: boolean;
+  recurrence: "none" | "daily" | "weekly";
   created_at: string;
 }
 
@@ -39,6 +40,9 @@ export interface Message {
   user_id: string;
   role: "user" | "assistant" | "system";
   content: string;
+  // Public Storage URL for a generated image, when this message carries one.
+  // Null for every plain-text message.
+  image_url: string | null;
   created_at: string;
 }
 

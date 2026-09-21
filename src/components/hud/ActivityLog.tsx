@@ -23,6 +23,26 @@ function TypewriterText({ text, skip, onDone }: { text: string; skip: boolean; o
   return <>{text.slice(0, shown)}</>;
 }
 
+// A plain <a download> is only honored by browsers for same-origin URLs — a
+// cross-origin Supabase Storage URL just navigates instead of saving. Fetch
+// it as a blob and trigger the save from that instead; if the fetch fails
+// (offline, CORS), fall back to opening it so the user can still save it
+// manually from there.
+async function downloadImage(url: string, filename: string) {
+  try {
+    const res = await fetch(url);
+    const blob = await res.blob();
+    const blobUrl = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = blobUrl;
+    a.download = filename;
+    a.click();
+    URL.revokeObjectURL(blobUrl);
+  } catch {
+    window.open(url, "_blank", "noopener,noreferrer");
+  }
+}
+
 export function ActivityLog({
   messages,
   loading,
@@ -102,13 +122,12 @@ export function ActivityLog({
                   >
                     OPEN IN NEW TAB
                   </a>
-                  <a
-                    href={m.imageDataUrl}
-                    download={`jarvis-${m.id}.png`}
+                  <button
+                    onClick={() => downloadImage(m.imageDataUrl!, `jarvis-${m.id}.png`)}
                     className="text-[10.5px] font-semibold text-[var(--accent)] hover:opacity-80"
                   >
                     DOWNLOAD
-                  </a>
+                  </button>
                 </div>
               </div>
             )}

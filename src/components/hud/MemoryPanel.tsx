@@ -43,11 +43,11 @@ export function MemoryPanel({ userId, open, onChanged }: { userId: string; open:
     onChanged();
   }
 
-  async function addReminder(text: string, remindAt: string) {
+  async function addReminder(text: string, remindAt: string, recurrence: Reminder["recurrence"]) {
     const supabase = getSupabaseBrowserClient();
     const { data, error } = await supabase
       .from("reminders")
-      .insert({ user_id: userId, text, remind_at: remindAt })
+      .insert({ user_id: userId, text, remind_at: remindAt, recurrence })
       .select()
       .single();
     if (error || !data) return error?.message ?? "Couldn't save that reminder.";
@@ -132,6 +132,9 @@ export function MemoryPanel({ userId, open, onChanged }: { userId: string; open:
                   <div className="text-[var(--text)]">{r.text}</div>
                   <div className="mt-0.5 text-[10.5px] text-[var(--muted)]">
                     {new Date(r.remind_at).toLocaleString()}
+                    {r.recurrence !== "none" && (
+                      <span className="ml-1.5 text-[var(--accent)]">· repeats {r.recurrence}</span>
+                    )}
                   </div>
                 </div>
                 <button
@@ -182,9 +185,14 @@ export function MemoryPanel({ userId, open, onChanged }: { userId: string; open:
   );
 }
 
-function AddReminderForm({ onAdd }: { onAdd: (text: string, remindAt: string) => Promise<string | null> }) {
+function AddReminderForm({
+  onAdd,
+}: {
+  onAdd: (text: string, remindAt: string, recurrence: Reminder["recurrence"]) => Promise<string | null>;
+}) {
   const [text, setText] = useState("");
   const [when, setWhen] = useState("");
+  const [recurrence, setRecurrence] = useState<Reminder["recurrence"]>("none");
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
 
@@ -201,7 +209,7 @@ function AddReminderForm({ onAdd }: { onAdd: (text: string, remindAt: string) =>
     }
     setSaving(true);
     setError(null);
-    const err = await onAdd(trimmed, remindAt.toISOString());
+    const err = await onAdd(trimmed, remindAt.toISOString(), recurrence);
     setSaving(false);
     if (err) {
       setError(err);
@@ -209,6 +217,7 @@ function AddReminderForm({ onAdd }: { onAdd: (text: string, remindAt: string) =>
     }
     setText("");
     setWhen("");
+    setRecurrence("none");
   }
 
   return (
@@ -228,6 +237,16 @@ function AddReminderForm({ onAdd }: { onAdd: (text: string, remindAt: string) =>
           className="min-w-0 flex-1 rounded-md border px-2.5 py-2 text-[12px] outline-none focus:border-[var(--accent)]"
           style={{ background: "var(--bg-elevated)", borderColor: "var(--border)", color: "var(--text)" }}
         />
+        <select
+          value={recurrence}
+          onChange={(e) => setRecurrence(e.target.value as Reminder["recurrence"])}
+          className="shrink-0 rounded-md border px-2 text-[11px] outline-none focus:border-[var(--accent)]"
+          style={{ background: "var(--bg-elevated)", borderColor: "var(--border)", color: "var(--text)" }}
+        >
+          <option value="none">Once</option>
+          <option value="daily">Daily</option>
+          <option value="weekly">Weekly</option>
+        </select>
         <button
           onClick={submit}
           disabled={saving}
