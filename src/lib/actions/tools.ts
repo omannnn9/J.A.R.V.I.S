@@ -76,7 +76,7 @@ export const toolDeclarations: FunctionDeclaration[] = [
   },
   {
     name: "set_reminder",
-    description: "Create a reminder that will notify the user at a future time, as long as this site is open in a browser tab.",
+    description: "Create a reminder that will notify the user at a future time. Fires reliably if they've enabled push notifications in Settings; otherwise only while this site is open in a browser tab.",
     parameters: {
       type: Type.OBJECT,
       properties: {

@@ -1,10 +1,11 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import type { Profile } from "@/lib/supabase/types";
 import { useAudioDevices } from "@/hooks/useAudioDevices";
 import { useWakeWordSupport } from "@/hooks/useWakeWord";
 import { getSupabaseBrowserClient } from "@/lib/supabase/client";
+import { isPushSubscribed, isPushSupported, subscribeToPush, unsubscribeFromPush } from "@/lib/push/subscribe";
 
 export function SettingsPanel({
   profile,
@@ -29,6 +30,34 @@ export function SettingsPanel({
   const [clearing, setClearing] = useState(false);
   const { inputs, outputs, supportsOutputSelection } = useAudioDevices();
   const wakeWordSupported = useWakeWordSupport();
+  const [pushSupported, setPushSupported] = useState(false);
+  const [pushSubscribed, setPushSubscribed] = useState(false);
+  const [pushBusy, setPushBusy] = useState(false);
+  const [pushError, setPushError] = useState<string | null>(null);
+
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- one-time read of browser-only APIs, not derived state
+    setPushSupported(isPushSupported());
+    isPushSubscribed().then(setPushSubscribed);
+  }, []);
+
+  async function togglePush() {
+    setPushBusy(true);
+    setPushError(null);
+    try {
+      if (pushSubscribed) {
+        await unsubscribeFromPush(profile.id);
+        setPushSubscribed(false);
+      } else {
+        await subscribeToPush(profile.id);
+        setPushSubscribed(true);
+      }
+    } catch (e) {
+      setPushError(e instanceof Error ? e.message : "Couldn't change push notification settings.");
+    } finally {
+      setPushBusy(false);
+    }
+  }
 
   async function handleExport() {
     setExporting(true);
@@ -185,6 +214,29 @@ export function SettingsPanel({
           hint={`Say "${assistantName || "JARVIS"}" to wake it up while asleep. Uses your browser's built-in speech recognition (Chrome/Edge only) — audio is sent to your browser vendor's speech service while this is on.`}
         >
           <ToggleButton checked={wakeWordEnabled} onChange={setWakeWordEnabled} />
+        </Field>
+      )}
+
+      {pushSupported && (
+        <Field
+          label="Push notifications"
+          hint={
+            pushError ??
+            "Get reminders even when this tab (or the browser) is closed, on this device. Off by default — turning it on asks for notification permission."
+          }
+        >
+          <button
+            onClick={togglePush}
+            disabled={pushBusy}
+            className="rounded-lg border px-3 py-2 text-xs font-semibold tracking-wide transition-colors disabled:opacity-50"
+            style={{
+              borderColor: pushSubscribed ? "var(--accent-border)" : "var(--border)",
+              color: pushSubscribed ? "var(--accent)" : "var(--muted)",
+              background: pushSubscribed ? "var(--accent-dim)" : "transparent",
+            }}
+          >
+            {pushBusy ? "…" : pushSubscribed ? "ON — this device" : "OFF"}
+          </button>
         </Field>
       )}
 
