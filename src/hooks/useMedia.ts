@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import type { ImageAttachment } from "./useChat";
 
 async function grabFrame(stream: MediaStream): Promise<ImageAttachment> {
@@ -8,19 +8,40 @@ async function grabFrame(stream: MediaStream): Promise<ImageAttachment> {
   video.srcObject = stream;
   video.muted = true;
   video.playsInline = true;
-  await video.play();
-  await new Promise((r) => setTimeout(r, 150)); // let a real frame land
+  // Some browsers won't reliably decode/expose frames from a getUserMedia/
+  // getDisplayMedia track on a <video> that's never attached to the DOM —
+  // keep it in the document but fully invisible rather than detached.
+  video.style.position = "fixed";
+  video.style.width = "1px";
+  video.style.height = "1px";
+  video.style.opacity = "0";
+  video.style.pointerEvents = "none";
+  document.body.appendChild(video);
 
-  const canvas = document.createElement("canvas");
-  canvas.width = video.videoWidth || 1280;
-  canvas.height = video.videoHeight || 720;
-  const ctx = canvas.getContext("2d");
-  if (!ctx) throw new Error("Canvas unsupported");
-  ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+  try {
+    await video.play();
+    // Wait for an actual decoded frame instead of guessing a fixed delay —
+    // readyState >= 2 (HAVE_CURRENT_DATA) means at least one frame exists.
+    if (video.readyState < 2) {
+      await new Promise<void>((resolve) => {
+        video.addEventListener("loadeddata", () => resolve(), { once: true });
+        setTimeout(resolve, 2000); // never hang forever if the event doesn't fire
+      });
+    }
 
-  const dataUrl = canvas.toDataURL("image/jpeg", 0.85);
-  const [, base64] = dataUrl.split(",");
-  return { mimeType: "image/jpeg", data: base64 };
+    const canvas = document.createElement("canvas");
+    canvas.width = video.videoWidth || 1280;
+    canvas.height = video.videoHeight || 720;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) throw new Error("Canvas unsupported");
+    ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+
+    const dataUrl = canvas.toDataURL("image/jpeg", 0.85);
+    const [, base64] = dataUrl.split(",");
+    return { mimeType: "image/jpeg", data: base64 };
+  } finally {
+    video.remove();
+  }
 }
 
 // Never fail silently — a permission denial, a browser that doesn't support
@@ -45,11 +66,7 @@ function describeMediaError(e: unknown): string {
 }
 
 export function useMedia() {
-  const [screenSharing, setScreenSharing] = useState(false);
-  const [camOn, setCamOn] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const screenStreamRef = useRef<MediaStream | null>(null);
-  const camStreamRef = useRef<MediaStream | null>(null);
 
   // Starts false on both server and client (avoiding a hydration mismatch,
   // same pattern as useClock/useAudioDevices), resolved for real once
@@ -62,97 +79,52 @@ export function useMedia() {
     setSupportsCamera(!!navigator.mediaDevices?.getUserMedia);
   }, []);
 
-  const startScreenShare = useCallback(async () => {
+  // Each capture is a single still frame — open the stream, grab a frame,
+  // release it immediately. Not a live feed: nothing should be left running
+  // (and no camera/screen-share indicator left on) after one snapshot.
+  const captureScreen = useCallback(async (): Promise<ImageAttachment | null> => {
     if (!supportsScreenShare) {
       setError("Screen sharing isn't supported in this browser.");
-      return false;
+      return null;
     }
+    let stream: MediaStream | null = null;
     try {
       setError(null);
-      const stream = await navigator.mediaDevices.getDisplayMedia({ video: true });
-      screenStreamRef.current = stream;
-      stream.getVideoTracks()[0]?.addEventListener("ended", () => {
-        screenStreamRef.current = null;
-        setScreenSharing(false);
-      });
-      setScreenSharing(true);
-      return true;
-    } catch (e) {
-      setError(describeMediaError(e));
-      return false;
-    }
-  }, [supportsScreenShare]);
-
-  const stopScreenShare = useCallback(() => {
-    screenStreamRef.current?.getTracks().forEach((t) => t.stop());
-    screenStreamRef.current = null;
-    setScreenSharing(false);
-  }, []);
-
-  const captureScreen = useCallback(async (): Promise<ImageAttachment | null> => {
-    if (!screenStreamRef.current) {
-      const ok = await startScreenShare();
-      if (!ok || !screenStreamRef.current) return null;
-    }
-    try {
-      const shot = await grabFrame(screenStreamRef.current);
-      setError(null);
+      stream = await navigator.mediaDevices.getDisplayMedia({ video: true });
+      const shot = await grabFrame(stream);
       return { ...shot, label: "screen share" };
     } catch (e) {
       setError(describeMediaError(e));
       return null;
+    } finally {
+      stream?.getTracks().forEach((t) => t.stop());
     }
-  }, [startScreenShare]);
-
-  const startCamera = useCallback(async () => {
-    if (!supportsCamera) {
-      setError("Camera access isn't supported in this browser.");
-      return false;
-    }
-    try {
-      setError(null);
-      const stream = await navigator.mediaDevices.getUserMedia({ video: true });
-      camStreamRef.current = stream;
-      setCamOn(true);
-      return true;
-    } catch (e) {
-      setError(describeMediaError(e));
-      return false;
-    }
-  }, [supportsCamera]);
-
-  const stopCamera = useCallback(() => {
-    camStreamRef.current?.getTracks().forEach((t) => t.stop());
-    camStreamRef.current = null;
-    setCamOn(false);
-  }, []);
+  }, [supportsScreenShare]);
 
   const captureCamera = useCallback(async (): Promise<ImageAttachment | null> => {
-    if (!camStreamRef.current) {
-      const ok = await startCamera();
-      if (!ok || !camStreamRef.current) return null;
+    if (!supportsCamera) {
+      setError("Camera access isn't supported in this browser.");
+      return null;
     }
+    let stream: MediaStream | null = null;
     try {
-      const shot = await grabFrame(camStreamRef.current);
       setError(null);
+      stream = await navigator.mediaDevices.getUserMedia({ video: true });
+      const shot = await grabFrame(stream);
       return { ...shot, label: "webcam" };
     } catch (e) {
       setError(describeMediaError(e));
       return null;
+    } finally {
+      stream?.getTracks().forEach((t) => t.stop());
     }
-  }, [startCamera]);
+  }, [supportsCamera]);
 
   return {
     supportsScreenShare,
     supportsCamera,
-    screenSharing,
-    camOn,
     error,
-    startScreenShare,
-    stopScreenShare,
     captureScreen,
-    startCamera,
-    stopCamera,
     captureCamera,
   };
 }

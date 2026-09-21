@@ -387,16 +387,17 @@ export async function executeTool(
       const prompt = String(args.prompt ?? "").trim();
       if (!prompt) return { error: "No description given." };
       try {
-        const res = await ctx.genAI.models.generateImages({
+        const res = await ctx.genAI.models.generateContent({
           model: IMAGE_MODEL,
-          prompt,
-          config: { numberOfImages: 1 },
+          contents: [{ role: "user", parts: [{ text: prompt }] }],
+          config: { responseModalities: ["IMAGE"] },
         });
-        const img = res.generatedImages?.[0]?.image;
-        if (!img?.imageBytes) {
-          return { error: res.generatedImages?.[0]?.raiFilteredReason ?? "No image came back." };
+        const imgPart = res.candidates?.[0]?.content?.parts?.find((p) => p.inlineData?.data);
+        if (!imgPart?.inlineData?.data) {
+          const blockReason = res.promptFeedback?.blockReason;
+          return { error: blockReason ? `Blocked: ${blockReason}` : "No image came back." };
         }
-        const dataUrl = `data:${img.mimeType ?? "image/png"};base64,${img.imageBytes}`;
+        const dataUrl = `data:${imgPart.inlineData.mimeType ?? "image/png"};base64,${imgPart.inlineData.data}`;
         ctx.onGeneratedImage?.(dataUrl, prompt);
         return { ok: true, shown_to_user: true };
       } catch (e) {

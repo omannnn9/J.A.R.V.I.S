@@ -8,6 +8,7 @@ export function FileUploadZone({ onFile }: { onFile: (file: ImageAttachment) => 
   const inputRef = useRef<HTMLInputElement>(null);
   const [dragging, setDragging] = useState(false);
   const [lastFile, setLastFile] = useState<string | null>(null);
+  const [capturing, setCapturing] = useState<"screen" | "camera" | null>(null);
   const media = useMedia();
 
   function isAccepted(file: File): boolean {
@@ -80,28 +81,34 @@ export function FileUploadZone({ onFile }: { onFile: (file: ImageAttachment) => 
         <div className="mt-2 flex gap-1.5">
           {media.supportsScreenShare && (
             <button
+              disabled={capturing !== null}
               onClick={async () => {
+                setCapturing("screen");
                 const shot = await media.captureScreen();
+                setCapturing(null);
                 if (shot) setLastFile("screen share");
                 if (shot) onFile(shot);
               }}
-              className="flex-1 rounded-md border py-1.5 text-[10.5px] text-[var(--muted)] transition-colors hover:text-[var(--accent)]"
+              className="flex-1 rounded-md border py-1.5 text-[10.5px] text-[var(--muted)] transition-colors hover:text-[var(--accent)] disabled:opacity-50"
               style={{ borderColor: "var(--border)" }}
             >
-              🖥️ Show Screen
+              {capturing === "screen" ? "Waiting for share…" : "🖥️ Show Screen"}
             </button>
           )}
           {media.supportsCamera && (
             <button
+              disabled={capturing !== null}
               onClick={async () => {
+                setCapturing("camera");
                 const shot = await media.captureCamera();
+                setCapturing(null);
                 if (shot) setLastFile("webcam");
                 if (shot) onFile(shot);
               }}
-              className="flex-1 rounded-md border py-1.5 text-[10.5px] text-[var(--muted)] transition-colors hover:text-[var(--accent)]"
+              className="flex-1 rounded-md border py-1.5 text-[10.5px] text-[var(--muted)] transition-colors hover:text-[var(--accent)] disabled:opacity-50"
               style={{ borderColor: "var(--border)" }}
             >
-              📷 Show Camera
+              {capturing === "camera" ? "Waiting for camera…" : "📷 Show Camera"}
             </button>
           )}
         </div>
