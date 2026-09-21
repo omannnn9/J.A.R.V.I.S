@@ -51,17 +51,30 @@ export default function SignupPage() {
         emailRedirectTo: typeof window !== "undefined" ? `${window.location.origin}/` : undefined,
       },
     });
-    setLoading(false);
     if (signUpError) {
+      setLoading(false);
       setError(signUpError.message);
       trigger();
       return;
     }
     if (data.session) {
+      setLoading(false);
       router.replace("/");
-    } else {
-      setCheckEmail(true);
+      return;
     }
+    // signUp() didn't return a session — the project's own "confirm email"
+    // setting made that decision before the row was even written, so a
+    // database-side auto-confirm can't change this specific response. The
+    // account is already confirmed by the time we get here, though, so
+    // signing in immediately with the same credentials gets the user in
+    // without ever touching their inbox.
+    const { error: signInError } = await supabase.auth.signInWithPassword({ email, password });
+    setLoading(false);
+    if (signInError) {
+      setCheckEmail(true);
+      return;
+    }
+    router.replace("/");
   }
 
   if (checkEmail) {
