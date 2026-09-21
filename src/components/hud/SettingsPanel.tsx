@@ -4,13 +4,16 @@ import { useState } from "react";
 import type { Profile } from "@/lib/supabase/types";
 import { useAudioDevices } from "@/hooks/useAudioDevices";
 import { useWakeWordSupport } from "@/hooks/useWakeWord";
+import { getSupabaseBrowserClient } from "@/lib/supabase/client";
 
 export function SettingsPanel({
   profile,
   onSave,
+  onDataCleared,
 }: {
   profile: Profile;
   onSave: (patch: Partial<Profile>) => Promise<void>;
+  onDataCleared?: () => void;
 }) {
   const [assistantName, setAssistantName] = useState(profile.assistant_name);
   const [displayName, setDisplayName] = useState(profile.display_name);
@@ -22,8 +25,58 @@ export function SettingsPanel({
   const [wakeWordEnabled, setWakeWordEnabled] = useState(profile.wake_word_enabled);
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
+  const [exporting, setExporting] = useState(false);
+  const [clearing, setClearing] = useState(false);
   const { inputs, outputs, supportsOutputSelection } = useAudioDevices();
   const wakeWordSupported = useWakeWordSupport();
+
+  async function handleExport() {
+    setExporting(true);
+    const supabase = getSupabaseBrowserClient();
+    const [{ data: memories }, { data: reminders }, { data: messages }, { data: watchTopics }] = await Promise.all([
+      supabase.from("memories").select("content, created_at").eq("user_id", profile.id),
+      supabase.from("reminders").select("text, remind_at, notified, created_at").eq("user_id", profile.id),
+      supabase.from("messages").select("role, content, created_at").eq("user_id", profile.id),
+      supabase.from("watch_topics").select("topic, last_headline, created_at").eq("user_id", profile.id),
+    ]);
+    const bundle = {
+      exported_at: new Date().toISOString(),
+      profile: {
+        display_name: profile.display_name,
+        assistant_name: profile.assistant_name,
+        created_at: profile.created_at,
+      },
+      memories: memories ?? [],
+      reminders: reminders ?? [],
+      messages: messages ?? [],
+      watched_topics: watchTopics ?? [],
+    };
+    const blob = new Blob([JSON.stringify(bundle, null, 2)], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `jarvis-data-${new Date().toISOString().slice(0, 10)}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+    setExporting(false);
+  }
+
+  async function handleClearData() {
+    const ok = window.confirm(
+      "This permanently deletes everything JARVIS remembers about you — memories, reminders, conversation history, and watched topics. Your login stays active, but the app starts completely fresh. This can't be undone. Continue?"
+    );
+    if (!ok) return;
+    setClearing(true);
+    const supabase = getSupabaseBrowserClient();
+    await Promise.all([
+      supabase.from("memories").delete().eq("user_id", profile.id),
+      supabase.from("reminders").delete().eq("user_id", profile.id),
+      supabase.from("messages").delete().eq("user_id", profile.id),
+      supabase.from("watch_topics").delete().eq("user_id", profile.id),
+    ]);
+    setClearing(false);
+    onDataCleared?.();
+  }
 
   async function handleSave() {
     setSaving(true);
@@ -143,6 +196,33 @@ export function SettingsPanel({
       >
         {saving ? "SAVING…" : saved ? "SAVED ✓" : "SAVE CHANGES"}
       </button>
+
+      <div className="border-t pt-5" style={{ borderColor: "var(--border)" }}>
+        <label className="mb-1.5 block text-[11px] font-semibold tracking-wide text-[var(--muted)]">Your data</label>
+        <div className="flex gap-2">
+          <button
+            onClick={handleExport}
+            disabled={exporting}
+            className="flex-1 rounded-lg border py-2.5 text-xs font-semibold text-[var(--text)] transition-colors hover:border-[var(--accent)] disabled:opacity-50"
+            style={{ borderColor: "var(--border)" }}
+          >
+            {exporting ? "PREPARING…" : "EXPORT AS JSON"}
+          </button>
+          <button
+            onClick={handleClearData}
+            disabled={clearing}
+            className="flex-1 rounded-lg border py-2.5 text-xs font-semibold transition-colors disabled:opacity-50"
+            style={{ borderColor: "var(--red-dim)", color: "var(--red)" }}
+          >
+            {clearing ? "CLEARING…" : "CLEAR ALL DATA"}
+          </button>
+        </div>
+        <p className="mt-1.5 text-[10.5px] leading-relaxed text-[var(--muted)]">
+          Export downloads everything JARVIS knows about you. Clear permanently deletes it — memories, reminders,
+          history, watched topics — but keeps your login; there&apos;s no way to delete the account itself from
+          inside the app.
+        </p>
+      </div>
 
       <p className="text-[11px] leading-relaxed text-[var(--muted)]">
         Running in a browser, JARVIS can&apos;t launch apps, change OS settings, or access files you

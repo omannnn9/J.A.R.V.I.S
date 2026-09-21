@@ -9,6 +9,11 @@ export interface ToolContext {
   // a fortune in tokens for no benefit) — this side channel is how a
   // generated image actually reaches the screen.
   onGeneratedImage?: (dataUrl: string, prompt: string) => void;
+  // Undo instead of confirm-before-every-delete, same reasoning as the
+  // desktop app's undo stack: forgetting a fact or cancelling a reminder
+  // is never irreversible enough to justify asking first, but a wrong
+  // match deserves an easy way back.
+  onUndoableDelete?: (description: string, restore: () => Promise<void>) => void;
 }
 
 export const toolDeclarations: FunctionDeclaration[] = [
@@ -285,13 +290,18 @@ export async function executeTool(
       const query = String(args.query ?? "").trim();
       const { data } = await supabase
         .from("memories")
-        .select("id, content")
+        .select("id, content, created_at")
         .eq("user_id", ctx.userId)
         .ilike("content", `%${query}%`)
         .limit(1);
       const match = data?.[0];
       if (!match) return { error: "No matching memory found." };
       await supabase.from("memories").delete().eq("id", match.id);
+      ctx.onUndoableDelete?.(`Forgot "${match.content}"`, async () => {
+        await supabase
+          .from("memories")
+          .insert({ id: match.id, user_id: ctx.userId, content: match.content, created_at: match.created_at });
+      });
       return { ok: true, deleted: match.content };
     }
 
@@ -329,7 +339,7 @@ export async function executeTool(
       const query = String(args.query ?? "").trim();
       const { data } = await supabase
         .from("reminders")
-        .select("id, text")
+        .select("id, text, remind_at")
         .eq("user_id", ctx.userId)
         .eq("notified", false)
         .ilike("text", `%${query}%`)
@@ -337,6 +347,15 @@ export async function executeTool(
       const match = data?.[0];
       if (!match) return { error: "No matching reminder found." };
       await supabase.from("reminders").delete().eq("id", match.id);
+      ctx.onUndoableDelete?.(`Cancelled "${match.text}"`, async () => {
+        await supabase.from("reminders").insert({
+          id: match.id,
+          user_id: ctx.userId,
+          text: match.text,
+          remind_at: match.remind_at,
+          notified: false,
+        });
+      });
       return { ok: true, cancelled: match.text };
     }
 

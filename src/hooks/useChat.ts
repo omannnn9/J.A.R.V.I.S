@@ -62,6 +62,8 @@ export function useChat(profile: Profile | null, userId: string | null) {
     () => typeof navigator !== "undefined" && !!navigator.mediaDevices?.getUserMedia
   );
   const [error, setError] = useState<string | null>(null);
+  const [pendingUndo, setPendingUndo] = useState<{ message: string; restore: () => Promise<void> } | null>(null);
+  const undoTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [historyLoaded, setHistoryLoaded] = useState(false);
   const memoriesRef = useRef<string[]>([]);
 
@@ -226,6 +228,25 @@ export function useChat(profile: Profile | null, userId: string | null) {
     lipCursorMsRef.current = startMs + durMs;
   }, []);
 
+  const showUndo = useCallback((message: string, restore: () => Promise<void>) => {
+    if (undoTimerRef.current) clearTimeout(undoTimerRef.current);
+    setPendingUndo({ message, restore });
+    undoTimerRef.current = setTimeout(() => setPendingUndo(null), 8000);
+  }, []);
+
+  const confirmUndo = useCallback(async () => {
+    if (!pendingUndo) return;
+    if (undoTimerRef.current) clearTimeout(undoTimerRef.current);
+    await pendingUndo.restore();
+    setPendingUndo(null);
+    void loadMemories();
+  }, [pendingUndo, loadMemories]);
+
+  const dismissUndo = useCallback(() => {
+    if (undoTimerRef.current) clearTimeout(undoTimerRef.current);
+    setPendingUndo(null);
+  }, []);
+
   const handleToolCalls = useCallback(
     async (calls: { id?: string; name?: string; args?: Record<string, unknown> }[]) => {
       const session = sessionRef.current;
@@ -237,6 +258,7 @@ export function useChat(profile: Profile | null, userId: string | null) {
             userId: userIdRef.current!,
             genAI,
             onGeneratedImage: (dataUrl, prompt) => appendMessage("assistant", `Generated image: ${prompt}`, dataUrl),
+            onUndoableDelete: showUndo,
           });
           if (call.name === "remember_fact" || call.name === "forget_fact") void loadMemories();
           return { id: call.id, name: call.name, response: { result } };
@@ -244,7 +266,7 @@ export function useChat(profile: Profile | null, userId: string | null) {
       );
       session.sendToolResponse({ functionResponses: responses });
     },
-    [loadMemories, appendMessage]
+    [loadMemories, appendMessage, showUndo]
   );
 
   const finalizeTurn = useCallback(() => {
@@ -553,6 +575,7 @@ export function useChat(profile: Profile | null, userId: string | null) {
       micStreamRef.current?.getTracks().forEach((t) => t.stop());
       if (micCtxRef.current) void micCtxRef.current.close();
       if (playbackCtxRef.current) void playbackCtxRef.current.close();
+      if (undoTimerRef.current) clearTimeout(undoTimerRef.current);
     };
   }, []);
 
@@ -572,6 +595,9 @@ export function useChat(profile: Profile | null, userId: string | null) {
     interrupt,
     error,
     clearError,
+    pendingUndo,
+    confirmUndo,
+    dismissUndo,
     historyLoaded,
     reloadMemories: loadMemories,
   };

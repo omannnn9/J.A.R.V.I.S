@@ -22,6 +22,7 @@ import { Panel } from "@/components/hud/Panel";
 import { SettingsPanel } from "@/components/hud/SettingsPanel";
 import { MemoryPanel } from "@/components/hud/MemoryPanel";
 import { Toast } from "@/components/hud/Toast";
+import { UndoToast } from "@/components/hud/UndoToast";
 import type { ImageAttachment } from "@/hooks/useChat";
 
 export default function Home() {
@@ -41,6 +42,9 @@ export default function Home() {
     interrupt,
     error,
     clearError,
+    pendingUndo,
+    confirmUndo,
+    dismissUndo,
     historyLoaded,
     reloadMemories,
   } = useChat(profile, user?.id ?? null);
@@ -96,6 +100,22 @@ export default function Home() {
       toast(`${profile?.assistant_name ?? "JARVIS"} is awake.`);
     },
   });
+
+  // Matches the desktop app's wake-word behavior exactly: 2 minutes of
+  // silence puts JARVIS back to sleep so it isn't streaming audio for no
+  // reason. Only kicks in when wake word is on — otherwise sleeping would
+  // strand a user who has no way back in except the manual wake button.
+  useEffect(() => {
+    if (!historyLoaded || asleep || !profile?.wake_word_enabled) return;
+    if (chatLoading || speaking || micOn) return;
+    const assistant = profile?.assistant_name ?? "JARVIS";
+    const timer = setTimeout(() => {
+      interrupt();
+      setAsleep(true);
+      toast(`${assistant} is asleep — say "Hey ${assistant}" to wake me.`);
+    }, 2 * 60_000);
+    return () => clearTimeout(timer);
+  }, [historyLoaded, asleep, profile?.wake_word_enabled, profile?.assistant_name, chatLoading, speaking, micOn, interrupt, toast]);
 
   useEffect(() => {
     if (error) {
@@ -194,6 +214,7 @@ export default function Home() {
       style={{ ["--accent-hue" as string]: profile.theme_hue }}
     >
       <Toast message={toastMessage} />
+      <UndoToast pending={pendingUndo} onUndo={() => void confirmUndo()} onDismiss={dismissUndo} />
 
       <TopBar
         assistantName={profile.assistant_name}
@@ -298,6 +319,10 @@ export default function Home() {
           onSave={async (patch) => {
             await updateProfile(patch);
             toast("Settings saved — reconnect (reload) for a new voice to take effect");
+          }}
+          onDataCleared={() => {
+            setSettingsOpen(false);
+            window.location.reload();
           }}
         />
       </Panel>

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useRef, useState } from "react";
 
 export function CommandInput({
   onSend,
@@ -20,12 +20,41 @@ export function CommandInput({
   interruptActive: boolean;
 }) {
   const [text, setText] = useState("");
+  // Recent commands, most-recent-last. historyIndexRef tracks how far the
+  // user has walked back with ArrowUp; null means "not currently browsing
+  // history" (a fresh, unsent draft). draftRef holds whatever they'd typed
+  // before pressing ArrowUp, restored on ArrowDown past the newest entry.
+  const historyRef = useRef<string[]>([]);
+  const historyIndexRef = useRef<number | null>(null);
+  const draftRef = useRef("");
 
   function submit() {
     const trimmed = text.trim();
     if (!trimmed) return;
+    historyRef.current = [...historyRef.current.filter((h) => h !== trimmed), trimmed].slice(-50);
+    historyIndexRef.current = null;
     onSend(trimmed);
     setText("");
+  }
+
+  function recallHistory(direction: -1 | 1) {
+    const history = historyRef.current;
+    if (history.length === 0) return;
+    if (historyIndexRef.current === null) {
+      if (direction === 1) return; // ArrowDown with no active recall — nothing to do
+      draftRef.current = text;
+      historyIndexRef.current = history.length - 1;
+    } else {
+      const next = historyIndexRef.current + direction;
+      if (next < 0) return;
+      if (next >= history.length) {
+        historyIndexRef.current = null;
+        setText(draftRef.current);
+        return;
+      }
+      historyIndexRef.current = next;
+    }
+    setText(history[historyIndexRef.current]);
   }
 
   return (
@@ -38,6 +67,12 @@ export function CommandInput({
             if (e.key === "Enter") {
               e.preventDefault();
               submit();
+            } else if (e.key === "ArrowUp") {
+              e.preventDefault();
+              recallHistory(-1);
+            } else if (e.key === "ArrowDown") {
+              e.preventDefault();
+              recallHistory(1);
             }
           }}
           placeholder={listening ? "Listening…" : "Type a command or question…"}
