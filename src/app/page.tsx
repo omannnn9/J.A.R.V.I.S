@@ -45,6 +45,7 @@ export default function Home() {
     pendingUndo,
     confirmUndo,
     dismissUndo,
+    sleepRequestId,
     historyLoaded,
     reloadMemories,
   } = useChat(profile, user?.id ?? null);
@@ -61,6 +62,7 @@ export default function Home() {
   // chord, so releasing it only stops mic sessions PTT itself started —
   // never one the user turned on with the manual mic button.
   const pttActiveRef = useRef(false);
+  const lastSleepRequestRef = useRef(0);
 
   useEffect(() => {
     if (!authLoading && !session) router.replace("/login");
@@ -116,6 +118,23 @@ export default function Home() {
     }, 2 * 60_000);
     return () => clearTimeout(timer);
   }, [historyLoaded, asleep, profile?.wake_word_enabled, profile?.assistant_name, chatLoading, speaking, micOn, interrupt, toast]);
+
+  // The model can now actually act on "go to sleep" / "stop listening"
+  // instead of just talking as if it had (a real production bug: a user
+  // asked JARVIS to sleep, it agreed conversationally, and the mic stayed
+  // open picking up ambient audio for minutes afterward). sleepRequestId
+  // is a counter, not a boolean, so a ref comparison is needed to catch
+  // every real increment rather than relying on the effect's own dep
+  // array, which would also re-fire this on unrelated changes like micOn.
+  useEffect(() => {
+    if (sleepRequestId === lastSleepRequestRef.current) return;
+    lastSleepRequestRef.current = sleepRequestId;
+    interrupt();
+    if (micOn) void toggleMic();
+    setAsleep(true);
+    const assistant = profile?.assistant_name ?? "JARVIS";
+    toast(`${assistant} is asleep — say "Hey ${assistant}" to wake me.`);
+  }, [sleepRequestId, micOn, interrupt, toggleMic, toast, profile?.assistant_name]);
 
   useEffect(() => {
     if (error) {

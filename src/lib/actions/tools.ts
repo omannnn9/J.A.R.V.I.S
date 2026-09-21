@@ -14,6 +14,11 @@ export interface ToolContext {
   // is never irreversible enough to justify asking first, but a wrong
   // match deserves an easy way back.
   onUndoableDelete?: (description: string, restore: () => Promise<void>) => void;
+  // "Go to sleep" / "stop listening" is a real UI transition (closes the
+  // mic, ends the session's active state), not a database mutation — this
+  // is the only way the model can actually act on that request instead of
+  // just talking as if it had.
+  onSleepRequested?: () => void;
 }
 
 export const toolDeclarations: FunctionDeclaration[] = [
@@ -141,6 +146,12 @@ export const toolDeclarations: FunctionDeclaration[] = [
       },
       required: ["action", "prompt"],
     },
+  },
+  {
+    name: "go_to_sleep",
+    description:
+      "Stop actively listening and go quiet until woken again. Use this whenever the user asks you to go to sleep, be quiet, stop listening, hush, or leave them alone for now — always call this tool, don't just say you will.",
+    parameters: { type: Type.OBJECT, properties: {} },
   },
   {
     name: "generate_image",
@@ -400,6 +411,11 @@ export async function executeTool(
       } catch (e) {
         return { error: e instanceof Error ? e.message : "Code helper failed." };
       }
+    }
+
+    case "go_to_sleep": {
+      ctx.onSleepRequested?.();
+      return { ok: true, note: "Now going quiet until woken." };
     }
 
     case "generate_image": {

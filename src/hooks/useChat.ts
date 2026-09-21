@@ -41,7 +41,8 @@ function buildSystemInstruction(profile: Profile, memories: string[]): string {
     `You are ${profile.assistant_name}, an advanced, capable personal AI assistant running inside a website, speaking with ${profile.display_name}.`,
     `You are warm, sharp, a little witty, and extremely competent — inspired by the classic "JARVIS" archetype: calm, proactive, precise.`,
     `You are running in a web browser, not on the user's operating system. You cannot launch native apps, control the OS, change system settings, or access files outside what the user explicitly shares with you (uploads, screen share, webcam, clipboard). If asked to do something like that, say plainly that it's outside what a website is allowed to do in a browser, and offer the closest thing you can actually do instead.`,
-    `You have tools for: weather, remembering/recalling/forgetting facts about the user, setting/listing/cancelling reminders, searching the live web, opening YouTube searches, and opening links. Use them proactively whenever relevant — don't ask permission for read-only actions like checking weather or searching.`,
+    `You have tools for: weather, remembering/recalling/forgetting facts about the user, setting/listing/cancelling reminders, searching the live web, opening YouTube searches, opening links, writing/explaining/reviewing/fixing code, generating images, watching a topic for news and stopping watching it, and going to sleep. Use them proactively whenever relevant — don't ask permission for read-only actions like checking weather or searching.`,
+    `If the user asks you to go to sleep, be quiet, stop listening, or hush — call the go_to_sleep tool immediately. Don't just say you will and keep talking or keep the mic open; actually call it. This is the one instruction that overrides "keep replies natural," because leaving the mic open after being asked to stop is a real problem, not a conversational nicety.`,
     `Keep replies concise and natural — you're speaking them aloud, not writing an essay.`,
   ];
   if (memories.length) {
@@ -64,6 +65,11 @@ export function useChat(profile: Profile | null, userId: string | null) {
   const [error, setError] = useState<string | null>(null);
   const [pendingUndo, setPendingUndo] = useState<{ message: string; restore: () => Promise<void> } | null>(null);
   const undoTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Bumped each time the model actually calls go_to_sleep — a counter
+  // rather than a boolean so the page can tell "the model just asked to
+  // sleep again" apart from "still asleep from before" even if it never
+  // toggles false in between.
+  const [sleepRequestId, setSleepRequestId] = useState(0);
   const [historyLoaded, setHistoryLoaded] = useState(false);
   const memoriesRef = useRef<string[]>([]);
 
@@ -259,6 +265,7 @@ export function useChat(profile: Profile | null, userId: string | null) {
             genAI,
             onGeneratedImage: (dataUrl, prompt) => appendMessage("assistant", `Generated image: ${prompt}`, dataUrl),
             onUndoableDelete: showUndo,
+            onSleepRequested: () => setSleepRequestId((n) => n + 1),
           });
           if (call.name === "remember_fact" || call.name === "forget_fact") void loadMemories();
           return { id: call.id, name: call.name, response: { result } };
@@ -295,7 +302,17 @@ export function useChat(profile: Profile | null, userId: string | null) {
       if (!sc) return;
 
       if (sc.interrupted) {
+        // A real production bug traced back to here: interruption stopped
+        // audio but never flushed or cleared the transcript accumulators,
+        // so whatever partial sentence the model was mid-saying stayed in
+        // outputTranscriptRef and silently concatenated onto the *next*
+        // turn's transcript when it eventually flushed — producing garbled,
+        // run-on messages that sometimes landed under the wrong role
+        // entirely. Treat an interruption like an early turn-complete: flush
+        // and persist whatever really was said/heard so far, so the next
+        // turn starts from clean, empty buffers.
         stopAllPlayback();
+        finalizeTurn();
         ignoreAudioRef.current = false;
       }
 
@@ -598,6 +615,7 @@ export function useChat(profile: Profile | null, userId: string | null) {
     pendingUndo,
     confirmUndo,
     dismissUndo,
+    sleepRequestId,
     historyLoaded,
     reloadMemories: loadMemories,
   };
