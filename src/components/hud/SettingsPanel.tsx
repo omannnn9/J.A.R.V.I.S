@@ -6,6 +6,7 @@ import { useAudioDevices } from "@/hooks/useAudioDevices";
 import { useWakeWordSupport } from "@/hooks/useWakeWord";
 import { getSupabaseBrowserClient } from "@/lib/supabase/client";
 import { isPushSubscribed, isPushSupported, subscribeToPush, unsubscribeFromPush } from "@/lib/push/subscribe";
+import { useGoogleAuth } from "@/hooks/useGoogleAuth";
 
 export function SettingsPanel({
   profile,
@@ -30,6 +31,7 @@ export function SettingsPanel({
   const [clearing, setClearing] = useState(false);
   const { inputs, outputs, supportsOutputSelection } = useAudioDevices();
   const wakeWordSupported = useWakeWordSupport();
+  const google = useGoogleAuth();
   const [pushSupported, setPushSupported] = useState(false);
   const [pushSubscribed, setPushSubscribed] = useState(false);
   const [pushBusy, setPushBusy] = useState(false);
@@ -236,6 +238,31 @@ export function SettingsPanel({
             }}
           >
             {pushBusy ? "…" : pushSubscribed ? "ON — this device" : "OFF"}
+          </button>
+        </Field>
+      )}
+
+      {google.configured && (
+        <Field
+          label="Google"
+          hint={
+            google.error ??
+            (google.connected
+              ? "Connected — JARVIS can check your Calendar and search Gmail (read-only). This lasts for the current browser session only; reconnect after that."
+              : "Let JARVIS check your Google Calendar (read events, create events) and search Gmail (read-only, never sends or deletes anything).")
+          }
+        >
+          <button
+            onClick={() => (google.connected ? google.disconnect() : void google.connect())}
+            disabled={google.busy}
+            className="rounded-lg border px-3 py-2 text-xs font-semibold tracking-wide transition-colors disabled:opacity-50"
+            style={{
+              borderColor: google.connected ? "var(--accent-border)" : "var(--border)",
+              color: google.connected ? "var(--accent)" : "var(--muted)",
+              background: google.connected ? "var(--accent-dim)" : "transparent",
+            }}
+          >
+            {google.busy ? "…" : google.connected ? "CONNECTED — DISCONNECT" : "CONNECT GOOGLE"}
           </button>
         </Field>
       )}

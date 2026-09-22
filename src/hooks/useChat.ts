@@ -15,6 +15,7 @@ import { getSupabaseBrowserClient } from "@/lib/supabase/client";
 import { floatTo16BitPCM, int16ToBase64, base64ToInt16, int16ToFloat32, resampleTo16k } from "@/lib/gemini/pcm";
 import { resetLipSync, scheduleTextSpan, stopLipSync } from "@/lib/head/lipSyncBus";
 import { resolveDeviceIdByLabel } from "@/lib/audio/devices";
+import { getCachedGoogleAccessToken } from "@/lib/google/client";
 import type { Profile } from "@/lib/supabase/types";
 
 export interface ChatMessage {
@@ -72,7 +73,7 @@ function buildSystemInstruction(profile: Profile, memories: string[]): string {
     `You are ${profile.assistant_name}, an advanced, capable personal AI assistant running inside a website, speaking with ${profile.display_name}.`,
     `You are warm, sharp, a little witty, and extremely competent — inspired by the classic "JARVIS" archetype: calm, proactive, precise.`,
     `You are running in a web browser, not on the user's operating system. You cannot launch native apps, control the OS, change system settings, or access files outside what the user explicitly shares with you (uploads, screen share, webcam, clipboard). If asked to do something like that, say plainly that it's outside what a website is allowed to do in a browser, and offer the closest thing you can actually do instead.`,
-    `You have tools for: weather, remembering/recalling/forgetting facts about the user, setting/listing/cancelling reminders (one-off or recurring daily/weekly), starting a countdown timer, searching the live web, opening YouTube searches, opening links, writing/explaining/reviewing/fixing code, generating and editing images, converting between units or currencies, doing exact math, watching a topic for news and stopping watching it, and going to sleep. Use them proactively whenever relevant — don't ask permission for read-only actions like checking weather, searching, or doing a calculation.`,
+    `You have tools for: weather, remembering/recalling/forgetting facts about the user, setting/listing/cancelling reminders (one-off or recurring daily/weekly), starting a countdown timer, searching the live web, opening YouTube searches, opening links, writing/explaining/reviewing/fixing code, generating and editing images, converting between units or currencies, doing exact math, watching a topic for news and stopping watching it, checking their Google Calendar or creating events on it, searching their Gmail (read-only), and going to sleep. Use them proactively whenever relevant — don't ask permission for read-only actions like checking weather, searching, or doing a calculation. The calendar/email tools need the user to have connected Google in Settings first; if a call comes back saying it isn't connected, tell them that plainly rather than pretending you checked and found nothing.`,
     `If the user asks you to go to sleep, be quiet, stop listening, or hush — call the go_to_sleep tool immediately. Don't just say you will and keep talking or keep the mic open; actually call it. This is the one instruction that overrides "keep replies natural," because leaving the mic open after being asked to stop is a real problem, not a conversational nicety.`,
     `Keep replies concise and natural — you're speaking them aloud, not writing an essay.`,
   ];
@@ -341,6 +342,7 @@ export function useChat(profile: Profile | null, userId: string | null) {
             setLastImage: (img) => {
               lastImageRef.current = img;
             },
+            getGoogleAccessToken: getCachedGoogleAccessToken,
           });
           if (call.name === "remember_fact" || call.name === "forget_fact") void loadMemories();
           return { id: call.id, name: call.name, response: { result } };

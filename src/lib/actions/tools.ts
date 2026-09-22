@@ -2,6 +2,12 @@ import { Type, type FunctionDeclaration, type GoogleGenAI } from "@google/genai"
 import { getSupabaseBrowserClient } from "@/lib/supabase/client";
 import { TEXT_MODEL, IMAGE_MODEL } from "@/lib/gemini/client";
 
+interface GCalEvent {
+  summary?: string;
+  start?: { dateTime?: string; date?: string };
+  end?: { dateTime?: string; date?: string };
+}
+
 export interface ToolContext {
   userId: string;
   genAI: GoogleGenAI;
@@ -28,6 +34,12 @@ export interface ToolContext {
   // bytes through its own text context (same reasoning as onGeneratedImage).
   getLastImage?: () => { mimeType: string; data: string } | null;
   setLastImage?: (image: { mimeType: string; data: string }) => void;
+  // A cached, short-lived OAuth access token from the user's own "Connect
+  // Google" flow in Settings — null whenever they haven't connected it or
+  // it's expired. There's no refresh-token flow (see src/lib/google/client
+  // for why), so a Google tool call failing with this null is an expected,
+  // recoverable state, not a bug.
+  getGoogleAccessToken?: () => string | null;
 }
 
 export const toolDeclarations: FunctionDeclaration[] = [
@@ -281,6 +293,46 @@ export const toolDeclarations: FunctionDeclaration[] = [
         minutes: { type: Type.NUMBER, description: "How many minutes the timer should run for." },
       },
       required: ["minutes"],
+    },
+  },
+  {
+    name: "list_calendar_events",
+    description:
+      "List the user's upcoming Google Calendar events. Use when asked about their schedule, what's coming up, or whether they're free at a time. Requires Google connected in Settings — if this returns a not-connected error, tell the user to connect it there rather than pretending you checked.",
+    parameters: {
+      type: Type.OBJECT,
+      properties: {
+        days_ahead: { type: Type.NUMBER, description: "How many days ahead to look. Defaults to 7." },
+      },
+    },
+  },
+  {
+    name: "create_calendar_event",
+    description: "Create a new event on the user's primary Google Calendar. Requires Google connected in Settings.",
+    parameters: {
+      type: Type.OBJECT,
+      properties: {
+        title: { type: Type.STRING, description: "Event title." },
+        start_iso: { type: Type.STRING, description: "Start time, ISO 8601, e.g. 2026-01-15T14:00:00." },
+        end_iso: { type: Type.STRING, description: "End time, ISO 8601." },
+        description: { type: Type.STRING, description: "Optional event description." },
+      },
+      required: ["title", "start_iso", "end_iso"],
+    },
+  },
+  {
+    name: "search_emails",
+    description:
+      "Search the user's Gmail inbox and return matching messages (sender, subject, snippet). Use for things like 'do I have any emails from X' or 'what's in my inbox'. Read-only — cannot send, reply to, or delete email. Requires Google connected in Settings.",
+    parameters: {
+      type: Type.OBJECT,
+      properties: {
+        query: {
+          type: Type.STRING,
+          description: "Gmail search query, e.g. 'is:unread' or 'from:someone@example.com'. Defaults to 'is:unread'.",
+        },
+        max_results: { type: Type.NUMBER, description: "Max number of emails to return. Defaults to 5, capped at 15." },
+      },
     },
   },
 ];
@@ -828,6 +880,82 @@ export async function executeTool(
       const label = String(args.label ?? "Timer").trim() || "Timer";
       ctx.onTimerStarted?.(label, minutes * 60_000);
       return { ok: true, label, minutes };
+    }
+
+    case "list_calendar_events": {
+      const token = ctx.getGoogleAccessToken?.();
+      if (!token) return { error: "Google isn't connected — ask the user to connect it in Settings first." };
+      const daysAhead = Number(args.days_ahead ?? 7) || 7;
+      const timeMin = new Date().toISOString();
+      const timeMax = new Date(Date.now() + daysAhead * 24 * 60 * 60_000).toISOString();
+      const url =
+        "https://www.googleapis.com/calendar/v3/calendars/primary/events" +
+        `?timeMin=${encodeURIComponent(timeMin)}&timeMax=${encodeURIComponent(timeMax)}` +
+        "&singleEvents=true&orderBy=startTime&maxResults=20";
+      const res = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
+      if (res.status === 401) return { error: "Google connection expired — ask the user to reconnect it in Settings." };
+      if (!res.ok) return { error: `Calendar request failed (${res.status}).` };
+      const data: { items?: GCalEvent[] } = await res.json();
+      const events = (data.items ?? []).map((e) => ({
+        title: e.summary ?? "(no title)",
+        start: e.start?.dateTime ?? e.start?.date,
+        end: e.end?.dateTime ?? e.end?.date,
+      }));
+      return { events };
+    }
+
+    case "create_calendar_event": {
+      const token = ctx.getGoogleAccessToken?.();
+      if (!token) return { error: "Google isn't connected — ask the user to connect it in Settings first." };
+      const title = String(args.title ?? "").trim();
+      const startIso = String(args.start_iso ?? "");
+      const endIso = String(args.end_iso ?? "");
+      if (!title || !startIso || !endIso) return { error: "Need a title, start_iso, and end_iso." };
+      const res = await fetch("https://www.googleapis.com/calendar/v3/calendars/primary/events", {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+        body: JSON.stringify({
+          summary: title,
+          description: args.description ? String(args.description) : undefined,
+          start: { dateTime: startIso },
+          end: { dateTime: endIso },
+        }),
+      });
+      if (res.status === 401) return { error: "Google connection expired — ask the user to reconnect it in Settings." };
+      if (!res.ok) return { error: `Couldn't create the event (${res.status}).` };
+      const data: { htmlLink?: string } = await res.json();
+      return { ok: true, event_link: data.htmlLink, title };
+    }
+
+    case "search_emails": {
+      const token = ctx.getGoogleAccessToken?.();
+      if (!token) return { error: "Google isn't connected — ask the user to connect it in Settings first." };
+      const query = String(args.query ?? "is:unread");
+      const maxResults = Math.min(Number(args.max_results ?? 5) || 5, 15);
+      const listRes = await fetch(
+        `https://www.googleapis.com/gmail/v1/users/me/messages?q=${encodeURIComponent(query)}&maxResults=${maxResults}`,
+        { headers: { Authorization: `Bearer ${token}` } }
+      );
+      if (listRes.status === 401) return { error: "Google connection expired — ask the user to reconnect it in Settings." };
+      if (!listRes.ok) return { error: `Gmail search failed (${listRes.status}).` };
+      const listData: { messages?: { id: string }[] } = await listRes.json();
+      const ids = (listData.messages ?? []).map((m) => m.id);
+      const messages = await Promise.all(
+        ids.map(async (id) => {
+          const msgRes = await fetch(
+            `https://www.googleapis.com/gmail/v1/users/me/messages/${id}?format=metadata&metadataHeaders=From&metadataHeaders=Subject`,
+            { headers: { Authorization: `Bearer ${token}` } }
+          );
+          if (!msgRes.ok) return null;
+          const msg: { snippet?: string; payload?: { headers?: { name: string; value: string }[] } } =
+            await msgRes.json();
+          const headers = msg.payload?.headers ?? [];
+          const from = headers.find((h) => h.name === "From")?.value ?? "Unknown";
+          const subject = headers.find((h) => h.name === "Subject")?.value ?? "(no subject)";
+          return { from, subject, snippet: msg.snippet ?? "" };
+        })
+      );
+      return { emails: messages.filter((m): m is NonNullable<typeof m> => m !== null) };
     }
 
     default:
